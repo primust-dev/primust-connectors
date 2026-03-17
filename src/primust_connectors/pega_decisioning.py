@@ -581,7 +581,8 @@ FIT_VALIDATION = {
         "GDPR Art. 22: proves decision was automated, not human override. "
         "OCC exam: proves consistent decisioning without disclosing strategy."
     ),
-    "proof_ceiling": "attestation (permanent — Pega engine is opaque, Java SDK irrelevant)",
+    "proof_ceiling_today": "attestation",
+    "proof_ceiling_notes": "Permanent — Pega engine is opaque, Java SDK does not change ceiling",
     "java_sdk_changes_ceiling": False,  # explicitly called out
     "cross_run_consistency_applicable": True,
     "buildable_today": True,

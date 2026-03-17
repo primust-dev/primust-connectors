@@ -45,7 +45,8 @@ GUIDEWIRE_FIT = {
         "Cedant proves adjudication ran per policy terms on each claim without "
         "providing the reinsurer the claim file. Math replaces disclosure."
     ),
-    "proof_ceiling": "mathematical",
+    "proof_ceiling_today": "attestation",
+    "proof_ceiling_post_java_sdk": "mathematical",
     "cross_run_consistency_applicable": True,
     "buildable_today": False,
     "sdk_required": "Java (P10-D) + Guidewire Studio license",
@@ -73,7 +74,8 @@ HEALTHSHARE_FIT = {
         "processes ran without receiving PHI. HIPAA paradox resolved. "
         "Consent verification chain provides portable proof for HIE disputes."
     ),
-    "proof_ceiling": "mathematical",
+    "proof_ceiling_today": "attestation",
+    "proof_ceiling_post_java_sdk": "mathematical",
     "proof_ceiling_notes": (
         "Consent check = set_membership (deterministic). "
         "Consent expiry = threshold_comparison (arithmetic). "
@@ -110,7 +112,8 @@ SAPIENS_DECISION_FIT = {
         "fair underwriting proof to state commissioner without disclosing applications. "
         "Reinsurance treaty: prove exclusion check ran without sharing application files."
     ),
-    "proof_ceiling": "mathematical",
+    "proof_ceiling_today": "attestation",
+    "proof_ceiling_post_java_sdk": "mathematical",
     "cross_run_consistency_applicable": True,
     "buildable_today": False,
     "sdk_required": "Java SDK (P10-D)",
@@ -141,7 +144,8 @@ DUCK_CREEK_FIT = {
         "Claims: proves adjudication ran per policy terms without sharing claim files. "
         "Reinsurance: math replaces disclosure for treaty compliance."
     ),
-    "proof_ceiling": "mathematical",
+    "proof_ceiling_today": "attestation",
+    "proof_ceiling_post_csharp_sdk": "mathematical",
     "cross_run_consistency_applicable": True,
     "buildable_today": False,
     "sdk_required": "C# SDK (P10-E)",
@@ -161,7 +165,8 @@ MAJESCO_FIT = {
     "trust_deficit": True,
     "data_sensitivity": "Policyholder PII, health data (L&AH), rating factors, claimant records",
     "gep_value": "Identical to Duck Creek and Guidewire — same story, different platform.",
-    "proof_ceiling": "mathematical",
+    "proof_ceiling_today": "attestation",
+    "proof_ceiling_post_csharp_sdk": "mathematical",
     "cross_run_consistency_applicable": True,
     "buildable_today": False,
     "sdk_required": "C# SDK (P10-E)",
@@ -196,11 +201,8 @@ SAPIENS_ALIS_FIT = {
         "discriminatorily without producing protected health information. "
         "SEC variable product: automated vs human decision (GDPR Art. 22 analog)."
     ),
-    "proof_ceiling": {
-        "suitability_thresholds": "mathematical",
-        "underwriting_rules": "mathematical",
-        "benefit_determination": "mathematical",
-    },
+    "proof_ceiling_today": "attestation",
+    "proof_ceiling_post_csharp_sdk": "mathematical",
     "cross_run_consistency_applicable": True,
     "buildable_today": False,
     "sdk_required": "C# SDK (P10-E)",
@@ -264,7 +266,8 @@ def validate_fit(connector: dict) -> dict:
         "prop1_regulated_process": prop1_regulated,
         "prop2_external_verifier_trust_deficit": prop2_external_verifier,
         "prop3_data_cannot_be_disclosed": prop3_data_sensitivity,
-        "proof_ceiling": connector.get("proof_ceiling") or connector.get("proof_ceiling_today"),
+        "proof_ceiling_today": connector.get("proof_ceiling_today") or connector.get("proof_ceiling") or "attestation",
+        "proof_ceiling_max": connector.get("proof_ceiling_post_java_sdk") or connector.get("proof_ceiling_post_csharp_sdk") or connector.get("proof_ceiling_today") or connector.get("proof_ceiling") or "attestation",
         "buildable_today": connector.get("buildable_today", False),
         "sdk_blocker": connector.get("sdk_required_for_mathematical") or connector.get("sdk_required"),
         "cross_run_consistency": connector.get("cross_run_consistency_applicable", False),
@@ -272,27 +275,30 @@ def validate_fit(connector: dict) -> dict:
 
 
 def print_summary() -> None:
-    print("\n" + "=" * 80)
+    print("\n" + "=" * 92)
     print("PRIMUST CONNECTOR FIT VALIDATION")
-    print("=" * 80)
-    print(f"{'Platform':<40} {'Fit Declared':>16} {'Score':>6} {'Today':>6} {'Ceiling':>12}")
-    print("-" * 80)
+    print("=" * 92)
+    print(f"{'Platform':<32} {'Fit':>8} {'Score':>6} {'Ready':>6} {'Ceiling (today)':>16} {'Max (SDK)':>16}")
+    print("-" * 92)
 
     for connector in ALL_CONNECTORS:
         result = validate_fit(connector)
         today_str = "Y" if result["buildable_today"] else "N"
-        ceiling = result["proof_ceiling"]
-        if isinstance(ceiling, dict):
-            ceiling = "mathematical*"
-        else:
-            ceiling = str(ceiling)[:12]
-        fit_decl = str(result["fit_declared"])[:16]
+        ceiling_today = result["proof_ceiling_today"]
+        ceiling_max = result["proof_ceiling_max"]
+        if isinstance(ceiling_today, dict):
+            ceiling_today = "mixed"
+        if isinstance(ceiling_max, dict):
+            ceiling_max = "mathematical"
+        fit_decl = str(result["fit_declared"]).split(" ")[0]  # just STRONG or PARTIAL
+        max_str = ceiling_max if ceiling_max != ceiling_today else "—"
         print(
-            f"{result['platform'][:40]:<40} "
-            f"{fit_decl:>16} "
+            f"{result['platform'][:32]:<32} "
+            f"{fit_decl:>8} "
             f"{result['score']:>6} "
             f"{today_str:>6} "
-            f"{ceiling:>12}"
+            f"{str(ceiling_today):>16} "
+            f"{max_str:>16}"
         )
 
     print()

@@ -18,35 +18,37 @@ Primust connectors instrument these workflows to produce **Verifiable Process Ex
 
 ### Financial Services
 
-| Platform | Use case | Proof ceiling | SDK |
-|---|---|---|---|
-| [ComplyAdvantage](#complyadvantage) | AML entity screening | Attestation | Python |
-| [NICE Actimize](#nice-actimize) | AML transaction monitoring + SAR | Witnessed | Python |
-| [FICO Blaze Advisor](#fico-blaze) | Credit decisioning BRMS | Mathematical | Python + Java |
-| [IBM ODM](#ibm-odm) | Enterprise BRMS / underwriting | Mathematical | Python + Java |
-| [FICO Falcon](#fico-falcon) | Card fraud detection | Attestation (Mathematical threshold) | Python |
-| [Pega CDH](#pega) | Next-best-action / regulated NBA | Attestation | Python |
+| Platform | Use case | Ceiling (today) | Max (in-process SDK) | Status |
+|---|---|---|---|---|
+| [ComplyAdvantage](#complyadvantage) | AML entity screening | Attestation | Attestation | Python — ready |
+| [NICE Actimize](#nice-actimize) | AML transaction monitoring + SAR | Attestation | Mathematical | Python — ready |
+| [FICO Blaze Advisor](#fico-blaze) | Credit decisioning BRMS | Attestation | Mathematical | Python — ready |
+| [IBM ODM](#ibm-odm) | Enterprise BRMS / underwriting | Attestation | Mathematical | Python — ready |
+| [FICO Falcon](#fico-falcon) | Card fraud detection | Attestation | Mathematical | Python — ready |
+| [Pega CDH](#pega) | Next-best-action / regulated NBA | Attestation | Attestation (permanent) | Python — ready |
 
 ### Clinical
 
-| Platform | Use case | Proof ceiling | SDK |
-|---|---|---|---|
-| [Wolters Kluwer UpToDate](#uptodate) | Clinical decision support | Mathematical | Python |
-| [InterSystems HealthShare](#healthshare) | Clinical governance / HIE | Mathematical | Java (spec) |
+| Platform | Use case | Ceiling (today) | Max (in-process SDK) | Status |
+|---|---|---|---|---|
+| [Wolters Kluwer UpToDate](#uptodate) | Clinical decision support | Attestation | Mathematical | Python — ready |
+| [InterSystems HealthShare](#healthshare) | Clinical governance / HIE | Attestation | Mathematical | Java spec |
 
 ### Insurance
 
-| Platform | Use case | Proof ceiling | SDK |
-|---|---|---|---|
-| [Guidewire](#guidewire) | P&C claims adjudication | Mathematical | Java (spec) |
-| [Duck Creek Technologies](#duck-creek) | P&C rating + claims | Mathematical | C# (spec) |
-| [Majesco CloudInsurer](#majesco) | P&C / L&AH rating + claims | Mathematical | C# (spec) |
-| [Sapiens DECISION](#sapiens-decision) | Insurance underwriting rules | Mathematical | Java (spec) |
-| [Sapiens ALIS](#sapiens-alis) | L&AH — suitability + underwriting | Mathematical | C# (spec) |
+| Platform | Use case | Ceiling (today) | Max (in-process SDK) | Status |
+|---|---|---|---|---|
+| [Guidewire](#guidewire) | P&C claims adjudication | Attestation | Mathematical | Java spec |
+| [Duck Creek Technologies](#duck-creek) | P&C rating + claims | Attestation | Mathematical | C# spec |
+| [Majesco CloudInsurer](#majesco) | P&C / L&AH rating + claims | Attestation | Mathematical | C# spec |
+| [Sapiens DECISION](#sapiens-decision) | Insurance underwriting rules | Attestation | Mathematical | Java spec |
+| [Sapiens ALIS](#sapiens-alis) | L&AH — suitability + underwriting | Attestation | Mathematical | C# spec |
 
-**Proof ceiling** is the maximum achievable proof level for that platform. "Mathematical" means a ZK circuit can verify the computation — the verifier has cryptographic proof, not just an attestation. "Attestation" means the process is observed at the API boundary.
+**Ceiling (today)** is the proof level achievable with the current REST/API connectors. All REST connectors are Attestation — the vendor's internal logic is a black box at the API boundary.
 
-**SDK** indicates buildable status. Python connectors are runnable today. Java/C# spec files require the respective SDK (`com.primust:primust-sdk` or `Primust.SDK`) which are available separately.
+**Max (in-process SDK)** is the theoretical maximum when running inside the vendor's JVM/.NET process with the Java/C# SDK. In-process execution enables Mathematical proof via ZK circuits for deterministic computations.
+
+**Status** indicates buildable status. Python connectors are runnable today (321 tests passing). Java/C# spec files are reference implementations that require the respective SDK (`com.primust:primust-sdk` or `Primust.SDK`).
 
 ## Installation
 
@@ -150,11 +152,12 @@ from primust_connectors import NiceActimizeConnector
 
 ### FICO Blaze Advisor
 
-**Verifier:** CFPB, state AGs, plaintiff attorneys (ECOA / fair lending)  
-**The paradox:** Prove credit rules applied consistently without revealing the decision criteria that could be gamed  
-**Proof ceiling:** Mathematical (in-process Java) / Attestation (REST)  
-**Cross-run consistency:** Detects discriminatory treatment from commitment hashes alone — never sees applicant data  
-**Buildable:** Now (Attestation), Mathematical with Java SDK
+**Verifier:** CFPB, state AGs, plaintiff attorneys (ECOA / fair lending)
+**The paradox:** Prove credit rules applied consistently without revealing the decision criteria that could be gamed
+**Proof ceiling today:** Attestation (REST API)
+**Proof ceiling max:** Mathematical (in-process Java SDK)
+**Cross-run consistency:** Detects discriminatory treatment from commitment hashes alone — never sees applicant data
+**Buildable:** Now (Attestation)
 
 ```python
 from primust_connectors import FicoBlazeConnector
@@ -164,10 +167,11 @@ from primust_connectors import FicoBlazeConnector
 
 ### IBM ODM
 
-**Verifier:** CFPB, OCC, state regulators  
-**Unique capability:** `getRulesFired()` enables automatic per-rule manifest generation — strongest BRMS evidence fidelity  
-**Proof ceiling:** Mathematical (in-process Java)  
-**Buildable:** Now (Attestation), Mathematical with Java SDK
+**Verifier:** CFPB, OCC, state regulators
+**Unique capability:** `getRulesFired()` enables automatic per-rule manifest generation — strongest BRMS evidence fidelity
+**Proof ceiling today:** Attestation (REST API)
+**Proof ceiling max:** Mathematical (in-process Java SDK)
+**Buildable:** Now (Attestation)
 
 ```python
 from primust_connectors import IBMODMConnector
@@ -177,10 +181,11 @@ from primust_connectors import IBMODMConnector
 
 ### FICO Falcon
 
-**Verifier:** OCC examiners, Visa/MC fraud program compliance  
-**Fit:** Partial — primary value for OCC examination and card network compliance  
-**Proof ceiling:** Attestation (score computation permanent), Mathematical (threshold comparison stages)  
-**Note:** Threshold values not disclosed — revealing enables score gaming. Mathematical proof proves comparison ran correctly without disclosing thresholds.  
+**Verifier:** OCC examiners, Visa/MC fraud program compliance
+**Fit:** Partial — primary value for OCC examination and card network compliance
+**Proof ceiling today:** Attestation (score computation is proprietary neural net)
+**Proof ceiling max:** Mathematical (threshold comparison stages only, with in-process SDK)
+**Note:** Score bands (low/medium/high) in output commitment, never raw scores. Threshold values not disclosed.
 **Buildable:** Now
 
 ```python
@@ -205,9 +210,10 @@ from primust_connectors import PegaDecisioningConnector
 
 ### Wolters Kluwer UpToDate
 
-**Verifier:** CMS, Joint Commission, malpractice insurers  
-**The paradox:** Prove drug interaction check ran on patient's medication list without disclosing PHI  
-**Proof ceiling:** Mathematical (dosing threshold stages — arithmetic bounds on published tables)  
+**Verifier:** CMS, Joint Commission, malpractice insurers
+**The paradox:** Prove drug interaction check ran on patient's medication list without disclosing PHI
+**Proof ceiling today:** Attestation (interaction database is proprietary)
+**Proof ceiling max:** Mathematical (dosing threshold stages — arithmetic bounds on published tables)
 **Buildable:** Now
 
 ```python
@@ -218,52 +224,58 @@ from primust_connectors import UpToDateConnector
 
 ### InterSystems HealthShare
 
-**Verifier:** CMS, Joint Commission, HIE participants, state health departments  
-**The paradox:** HIPAA — prove clinical governance ran on patient data without disclosing PHI  
-**Proof ceiling:** Mathematical (consent verification = set membership, expiry = threshold comparison)  
+**Verifier:** CMS, Joint Commission, HIE participants, state health departments
+**The paradox:** HIPAA — prove clinical governance ran on patient data without disclosing PHI
+**Proof ceiling today:** Attestation (spec only)
+**Proof ceiling max:** Mathematical (consent verification = set membership, expiry = threshold comparison)
 **Status:** Java spec — requires Java SDK + IRIS Java Gateway configuration
 
 ---
 
 ### Guidewire
 
-**Verifier:** Reinsurers, Lloyd's syndicates, state DOI examiners  
-**The use case:** Cedant proves adjudication ran per policy terms without providing reinsurer the claim file  
-**Proof ceiling:** Mathematical (all stages deterministic arithmetic)  
+**Verifier:** Reinsurers, Lloyd's syndicates, state DOI examiners
+**The use case:** Cedant proves adjudication ran per policy terms without providing reinsurer the claim file
+**Proof ceiling today:** Attestation (spec only)
+**Proof ceiling max:** Mathematical (all stages deterministic arithmetic)
 **Status:** Java spec — requires Java SDK + Guidewire Studio license
 
 ---
 
 ### Duck Creek Technologies
 
-**Verifier:** State insurance commissioners, reinsurers  
-**Proof ceiling:** Mathematical (DCT Extensions in-process)  
+**Verifier:** State insurance commissioners, reinsurers
+**Proof ceiling today:** Attestation (spec only)
+**Proof ceiling max:** Mathematical (DCT Extensions in-process)
 **Status:** C# spec — requires C# SDK + DCT Extensions framework
 
 ---
 
 ### Majesco CloudInsurer
 
-**Verifier:** State insurance commissioners, reinsurers  
-**Proof ceiling:** Mathematical (Majesco extension framework in-process)  
+**Verifier:** State insurance commissioners, reinsurers
+**Proof ceiling today:** Attestation (spec only)
+**Proof ceiling max:** Mathematical (Majesco extension framework in-process)
 **Status:** C# spec — requires C# SDK
 
 ---
 
 ### Sapiens DECISION
 
-**Verifier:** State insurance commissioners, Lloyd's syndicates, reinsurers  
-**The use case:** Prove rating factors applied consistently across book — fair underwriting proof without disclosing applications  
-**Proof ceiling:** Mathematical (in-process Java via Sapiens Decision API)  
+**Verifier:** State insurance commissioners, Lloyd's syndicates, reinsurers
+**The use case:** Prove rating factors applied consistently across book — fair underwriting proof without disclosing applications
+**Proof ceiling today:** Attestation (spec only)
+**Proof ceiling max:** Mathematical (in-process Java via Sapiens Decision API)
 **Status:** Java spec — requires Java SDK
 
 ---
 
 ### Sapiens ALIS
 
-**Verifier:** State insurance departments, SEC/FINRA (variable products), CMS  
-**Unique angle:** FINRA Rule 2111 / Reg BI suitability — prove annuity suitability assessment ran without disclosing customer financial profile  
-**Proof ceiling:** Mathematical (suitability threshold comparisons are arithmetic)  
+**Verifier:** State insurance departments, SEC/FINRA (variable products), CMS
+**Unique angle:** FINRA Rule 2111 / Reg BI suitability — prove annuity suitability assessment ran without disclosing customer financial profile
+**Proof ceiling today:** Attestation (spec only)
+**Proof ceiling max:** Mathematical (suitability threshold comparisons are arithmetic)
 **Status:** C# spec — requires C# SDK
 
 ---
@@ -274,20 +286,20 @@ from primust_connectors import UpToDateConnector
 from primust_connectors.fit_validation import print_summary
 
 print_summary()
-# Platform             | Fit      | Proof ceiling | Buildable
-# ComplyAdvantage      | STRONG   | attestation   | now
-# NICE Actimize        | STRONG   | witnessed     | now
-# FICO Blaze           | STRONG   | mathematical  | now
-# IBM ODM              | STRONG   | mathematical  | now
-# UpToDate             | STRONG   | mathematical  | now
-# Guidewire            | STRONG   | mathematical  | design partner
-# HealthShare          | STRONG   | mathematical  | java sdk
-# Sapiens DECISION     | STRONG   | mathematical  | java sdk
-# Duck Creek           | STRONG   | mathematical  | c# sdk
-# Majesco              | STRONG   | mathematical  | c# sdk
-# Sapiens ALIS         | STRONG   | mathematical  | c# sdk
-# FICO Falcon          | PARTIAL  | attestation   | now
-# Pega CDH             | PARTIAL  | attestation   | now
+# Platform                           Fit  Score  Ready  Ceiling (today)        Max (SDK)
+# ComplyAdvantage                 STRONG    3/3      Y      attestation                —
+# NICE Actimize                   STRONG    3/3      Y      attestation     mathematical
+# FICO Blaze Advisor              STRONG    3/3      Y      attestation     mathematical
+# IBM Operational Decision Mgr    STRONG    3/3      Y      attestation     mathematical
+# Wolters Kluwer UpToDate         STRONG    3/3      Y            mixed     mathematical
+# FICO Falcon                    PARTIAL    3/3      Y      attestation     mathematical
+# Pega Customer Decision Hub     PARTIAL    3/3      Y      attestation                —
+# Guidewire ClaimCenter           STRONG    3/3      N      attestation     mathematical
+# InterSystems HealthShare        STRONG    3/3      N      attestation     mathematical
+# Sapiens DECISION                STRONG    3/3      N      attestation     mathematical
+# Duck Creek Technologies         STRONG    3/3      N      attestation     mathematical
+# Majesco CloudInsurer            STRONG    3/3      N      attestation     mathematical
+# Sapiens ALIS                    STRONG    3/3      N      attestation     mathematical
 ```
 
 ## Architecture

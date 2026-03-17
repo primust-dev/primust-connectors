@@ -704,7 +704,7 @@ class TestFitValidation:
 
     def test_attestation_permanent(self):
         """Java SDK does NOT change the ceiling — explicitly called out."""
-        assert "attestation" in FIT_VALIDATION["proof_ceiling"]
+        assert FIT_VALIDATION["proof_ceiling_today"] == "attestation"
 
     def test_java_sdk_irrelevant(self):
         assert FIT_VALIDATION["java_sdk_changes_ceiling"] is False
