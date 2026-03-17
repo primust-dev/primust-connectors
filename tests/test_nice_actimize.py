@@ -70,7 +70,7 @@ def _make_legacy_connector(**kw):
     return NiceActimizeConnector(
         actimize_server_url=kw.get("url", "https://actimize.test.internal"),
         actimize_api_key=kw.get("api_key", "act_key_123"),
-        primust_api_key=kw.get("primust_key", "pk_test_456"),
+        primust_api_key=kw.get("primust_key", "pk_sb_456"),
         alert_score_threshold=kw.get("threshold", 0.65),
     )
 
@@ -79,7 +79,7 @@ def _make_alert_evaluator(**kw):
     return ActimizeAlertEvaluator(
         base_url=kw.get("url", "https://actimize.test.internal"),
         api_key=kw.get("api_key", "act_key_123"),
-        primust_api_key=kw.get("primust_key", "pk_test_456"),
+        primust_api_key=kw.get("primust_key", "pk_sb_456"),
         alert_score_threshold=kw.get("threshold", 0.65),
     )
 
@@ -88,7 +88,7 @@ def _make_sar_workflow(**kw):
     return ActimizeSARWorkflow(
         base_url=kw.get("url", "https://actimize.test.internal"),
         api_key=kw.get("api_key", "act_key_123"),
-        primust_api_key=kw.get("primust_key", "pk_test_456"),
+        primust_api_key=kw.get("primust_key", "pk_sb_456"),
     )
 
 
@@ -96,7 +96,7 @@ def _make_kyc_assessor(**kw):
     return ActimizeKYCAssessor(
         base_url=kw.get("url", "https://actimize.test.internal"),
         api_key=kw.get("api_key", "act_key_123"),
-        primust_api_key=kw.get("primust_key", "pk_test_456"),
+        primust_api_key=kw.get("primust_key", "pk_sb_456"),
     )
 
 

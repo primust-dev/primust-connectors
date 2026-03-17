@@ -59,7 +59,7 @@ def _mock_record_result(**kw):
 def _make_connector(**kw):
     return UpToDateConnector(
         utd_api_key=kw.get("utd_api_key", "utd_test_key"),
-        primust_api_key=kw.get("primust_api_key", "pk_test_123"),
+        primust_api_key=kw.get("primust_api_key", "pk_sb_123"),
         interaction_alert_threshold=kw.get("threshold", "major"),
     )
 

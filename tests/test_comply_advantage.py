@@ -63,7 +63,7 @@ def _mock_manifest_registration(name):
 def _make_connector(**kw):
     return ComplyAdvantageConnector(
         ca_api_key=kw.get("ca_api_key", "test_ca_key"),
-        primust_api_key=kw.get("primust_api_key", "pk_test_123"),
+        primust_api_key=kw.get("primust_api_key", "pk_sb_123"),
         fraud_score_threshold=kw.get("fraud_score_threshold", 75.0),
         visibility=kw.get("visibility", "opaque"),
     )

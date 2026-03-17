@@ -110,7 +110,7 @@ def _make_connector() -> GuidewireClaimCenterConnector:
         gw_base_url="https://test.guidewire.com",
         gw_client_id="test-client",
         gw_client_secret="test-secret",
-        primust_api_key="pk_test_abc123",
+        primust_api_key="pk_sb_abc123",
     )
     connector._manifest_ids = {
         "claim_retrieval": "sha256:manifest_retrieval",
@@ -278,9 +278,9 @@ class TestPrivacyInvariant:
         mock_run.record = capture_record
         mock_run.close = MagicMock(return_value=MagicMock(
             vpec_id="vpec_001",
-            proof_level="attestation",
+            proof_level_floor="attestation",
             chain_intact=True,
-            governance_gaps=[],
+            gaps=[],
         ))
 
         mock_pipeline = MagicMock()
@@ -364,7 +364,7 @@ class TestWorkflowCorrectness:
             return MagicMock(commitment_hash="sha256:abc", record_id="rec_001")
         mock_run.record = capture_record
         mock_run.close = MagicMock(return_value=MagicMock(
-            vpec_id="vpec_001", chain_intact=True, governance_gaps=[]
+            vpec_id="vpec_001", chain_intact=True, gaps=[]
         ))
         mock_pipeline = MagicMock()
         mock_pipeline.open = MagicMock(return_value=mock_run)

@@ -8,61 +8,61 @@ pip install primust-connectors
 
 Each connector wraps a regulated decisioning platform with [Primust](https://primust.com) VPEC issuance — proving governance ran without disclosing the data it ran on.
 
-## What problem this solves
+---
+
+## What Problem This Solves
 
 Regulated workflows have a structural problem: the party who needs proof (a regulator, reinsurer, or auditor) can't receive the data the process ran on. AML screenings can't disclose watchlist matching criteria. Clinical decision support can't share patient records. Insurance underwriting can't reveal rating factors that enable anti-selection.
 
 Primust connectors instrument these workflows to produce **Verifiable Process Execution Credentials (VPECs)** — cryptographically signed proof that a defined process ran on specific data, with the data committed locally and never transmitted.
 
-## Platform support
+---
 
-### Financial Services
+## Platform Support
 
-| Platform | Use case | Ceiling (today) | Max (in-process SDK) | Status |
+### 7 Python REST Connectors — Built (321 tests)
+
+All REST connectors are **Attestation ceiling** — the vendor's internal logic is a black box at the REST API boundary. Mathematical ceiling is achievable with Java/C# in-process SDKs running inside the vendor's runtime — see spec files for details.
+
+#### Financial Services
+
+| Platform | Use Case | Ceiling (REST) | Max (In-Process) | Tests |
 |---|---|---|---|---|
-| [ComplyAdvantage](#complyadvantage) | AML entity screening | Attestation | Attestation | Python — ready |
-| [NICE Actimize](#nice-actimize) | AML transaction monitoring + SAR | Attestation | Mathematical | Python — ready |
-| [FICO Blaze Advisor](#fico-blaze) | Credit decisioning BRMS | Attestation | Mathematical | Python — ready |
-| [IBM ODM](#ibm-odm) | Enterprise BRMS / underwriting | Attestation | Mathematical | Python — ready |
-| [FICO Falcon](#fico-falcon) | Card fraud detection | Attestation | Mathematical | Python — ready |
-| [Pega CDH](#pega) | Next-best-action / regulated NBA | Attestation | Attestation (permanent) | Python — ready |
+| [ComplyAdvantage](#complyadvantage) | AML entity screening | Attestation | Attestation (permanent) | 48 |
+| [NICE Actimize](#nice-actimize) | AML transaction monitoring + SAR | Witnessed (SAR) / Attestation (scoring) | Mathematical | 51 |
+| [FICO Blaze Advisor](#fico-blaze) | Credit decisioning BRMS | Attestation | Mathematical | 41 (shared with ODM) |
+| [IBM ODM](#ibm-odm) | Enterprise BRMS / underwriting | Attestation | Mathematical | 41 (shared with Blaze) |
+| [FICO Falcon](#fico-falcon) | Card fraud detection | Attestation | Mathematical | 45 |
+| [Pega CDH](#pega) | Next-best-action / regulated NBA | Attestation | Attestation (permanent) | 46 |
 
-### Clinical
+#### Clinical
 
-| Platform | Use case | Ceiling (today) | Max (in-process SDK) | Status |
+| Platform | Use Case | Ceiling (REST) | Max (In-Process) | Tests |
 |---|---|---|---|---|
-| [Wolters Kluwer UpToDate](#uptodate) | Clinical decision support | Attestation | Mathematical | Python — ready |
-| [InterSystems HealthShare](#healthshare) | Clinical governance / HIE | Attestation | Mathematical | Java spec |
+| [Wolters Kluwer UpToDate](#uptodate) | Clinical decision support | Attestation | Mathematical | 46 |
 
-### Insurance
+#### Insurance
 
-| Platform | Use case | Ceiling (today) | Max (in-process SDK) | Status |
+| Platform | Use Case | Ceiling (REST) | Max (In-Process) | Status |
 |---|---|---|---|---|
-| [Guidewire](#guidewire) | P&C claims adjudication | Attestation | Mathematical | Java spec |
-| [Duck Creek Technologies](#duck-creek) | P&C rating + claims | Attestation | Mathematical | C# spec |
-| [Majesco CloudInsurer](#majesco) | P&C / L&AH rating + claims | Attestation | Mathematical | C# spec |
-| [Sapiens DECISION](#sapiens-decision) | Insurance underwriting rules | Attestation | Mathematical | Java spec |
-| [Sapiens ALIS](#sapiens-alis) | L&AH — suitability + underwriting | Attestation | Mathematical | C# spec |
+| [Guidewire ClaimCenter](#guidewire) | P&C claims adjudication | **Attestation** | Mathematical | Python REST: **BUILT** (38 tests). Java in-process: spec only — requires Guidewire Studio. |
 
-**Ceiling (today)** is the proof level achievable with the current REST/API connectors. All REST connectors are Attestation — the vendor's internal logic is a black box at the API boundary.
+#### Specs Only (Java/C# — require vendor SDK licenses)
 
-**Max (in-process SDK)** is the theoretical maximum when running inside the vendor's JVM/.NET process with the Java/C# SDK. In-process execution enables Mathematical proof via ZK circuits for deterministic computations.
+| Platform | Language | Notes |
+|---|---|---|
+| InterSystems HealthShare | Java | Requires IRIS Java Gateway |
+| Duck Creek Technologies | C# | Requires DCT Extensions framework |
+| Majesco CloudInsurer | C# | Requires Majesco extension framework |
+| Sapiens DECISION | Java | Requires Sapiens Decision API |
+| Sapiens ALIS | C# | Requires Sapiens ALIS SDK |
 
-**Status** indicates buildable status. Python connectors are runnable today (321 tests passing). Java/C# spec files are reference implementations that require the respective SDK (`com.primust:primust-sdk` or `Primust.SDK`).
-
-## Installation
-
-```bash
-pip install primust-connectors
-```
-
-Requires `primust>=0.1.0` and `httpx>=0.27.0`.
+---
 
 ## Quickstart — ComplyAdvantage
 
 ```python
 from primust_connectors import ComplyAdvantageConnector
-import primust
 
 connector = ComplyAdvantageConnector(
     ca_api_key="ca_live_...",
@@ -82,10 +82,10 @@ result = connector.screen_entity(
 vpec = run.close()
 # vpec proves screening ran on this entity
 # Provide to FinCEN examiner — they verify at verify.primust.com
-# without receiving your watchlist matching criteria
+# without receiving watchlist matching criteria
 ```
 
-## Quickstart — NICE Actimize (SAR determination)
+## Quickstart — NICE Actimize (SAR Determination)
 
 ```python
 from primust_connectors import NiceActimizeConnector
@@ -98,8 +98,8 @@ connector = NiceActimizeConnector(
 connector.register_manifests()
 
 p = connector.new_pipeline()
+run = p.open()
 
-# Open a human review session for Witnessed level
 review_session = connector.open_sar_review(
     pipeline=p,
     reviewer_key_id="analyst_key_001",
@@ -109,7 +109,7 @@ review_session = connector.open_sar_review(
 result = connector.record_sar_determination(
     pipeline=p,
     alert_id="alert_12345",
-    transaction_data=transaction,   # committed locally
+    transaction_data=transaction,    # committed locally — never transmitted
     determination="FILE",
     review_session=review_session,
     reviewer_signature="ed25519:...",
@@ -121,47 +121,36 @@ vpec = run.close()
 # Satisfies 31 CFR §1020.320 documentation requirements
 ```
 
-## Platform details
+---
+
+## Platform Details
 
 ### ComplyAdvantage
 
-**Verifier:** FinCEN, FCA, AUSTRAC  
-**The paradox:** Prove AML screening ran without disclosing watchlist matching criteria (revealing criteria enables circumvention)  
-**Proof ceiling:** Attestation  
-**Buildable:** Now
-
-```python
-from primust_connectors import ComplyAdvantageConnector
-```
+**Verifier:** FinCEN, FCA, AUSTRAC
+**The paradox:** Prove AML screening ran without disclosing watchlist matching criteria (revealing criteria enables circumvention)
+**Proof ceiling:** Attestation (permanent — screening logic is proprietary)
+**Gap codes:** `complyadvantage_api_error` (High), `complyadvantage_auth_failure` (Critical)
 
 ---
 
 ### NICE Actimize
 
-**Verifier:** FinCEN, OCC, FCA — SAR filing authority  
-**The paradox:** Velocity and structuring thresholds that trigger SAR review are never disclosed; SAR contents are protected  
-**Proof ceiling:** Witnessed (SAR determination), Attestation (ML behavioral scoring — permanent)  
-**Buildable:** Now  
+**Verifier:** FinCEN, OCC, FCA — SAR filing authority
+**The paradox:** Velocity and structuring thresholds that trigger SAR review are never disclosed; SAR contents are protected
+**Proof ceiling:** Witnessed (SAR determination), Attestation (ML behavioral scoring — permanent)
 **Regulatory hook:** 31 CFR §1020.320 SAR documentation
-
-```python
-from primust_connectors import NiceActimizeConnector
-```
+**Gap codes:** `actimize_api_error` (High), `actimize_auth_failure` (Critical)
 
 ---
 
 ### FICO Blaze Advisor
 
 **Verifier:** CFPB, state AGs, plaintiff attorneys (ECOA / fair lending)
-**The paradox:** Prove credit rules applied consistently without revealing the decision criteria that could be gamed
+**The paradox:** Prove credit rules applied consistently without revealing decision criteria that could be gamed
 **Proof ceiling today:** Attestation (REST API)
 **Proof ceiling max:** Mathematical (in-process Java SDK)
-**Cross-run consistency:** Detects discriminatory treatment from commitment hashes alone — never sees applicant data
-**Buildable:** Now (Attestation)
-
-```python
-from primust_connectors import FicoBlazeConnector
-```
+**Gap codes:** `blaze_api_error` (High), `blaze_auth_failure` (Critical)
 
 ---
 
@@ -170,41 +159,27 @@ from primust_connectors import FicoBlazeConnector
 **Verifier:** CFPB, OCC, state regulators
 **Unique capability:** `getRulesFired()` enables automatic per-rule manifest generation — strongest BRMS evidence fidelity
 **Proof ceiling today:** Attestation (REST API)
-**Proof ceiling max:** Mathematical (in-process Java SDK)
-**Buildable:** Now (Attestation)
-
-```python
-from primust_connectors import IBMODMConnector
-```
+**Proof ceiling max:** Mathematical (in-process Java SDK via IlrSessionFactory)
+**Gap codes:** `odm_api_error` (High), `odm_auth_failure` (Critical)
 
 ---
 
 ### FICO Falcon
 
 **Verifier:** OCC examiners, Visa/MC fraud program compliance
-**Fit:** Partial — primary value for OCC examination and card network compliance
 **Proof ceiling today:** Attestation (score computation is proprietary neural net)
 **Proof ceiling max:** Mathematical (threshold comparison stages only, with in-process SDK)
-**Note:** Score bands (low/medium/high) in output commitment, never raw scores. Threshold values not disclosed.
-**Buildable:** Now
-
-```python
-from primust_connectors import FicoFalconConnector
-```
+**Note:** Score bands (low/medium/high) in output commitment — never raw scores
+**Gap codes:** `falcon_api_error` (High), `falcon_auth_failure` (Critical)
 
 ---
 
 ### Pega CDH
 
-**Verifier:** OCC, CFPB (regulated NBA), GDPR data subjects (Article 22)  
-**Fit:** Partial — only valuable for regulated NBA deployments. Internal marketing workflows have no external verifier problem.  
-**Proof ceiling:** Attestation (permanent — Pega engine is opaque)  
-**Best use case:** GDPR Article 22 automated decision disclosure; regulated credit limit / forbearance decisions  
-**Buildable:** Now
-
-```python
-from primust_connectors import PegaDecisioningConnector
-```
+**Verifier:** OCC, CFPB (regulated NBA), GDPR data subjects (Article 22)
+**Proof ceiling:** Attestation (permanent — Pega engine is opaque)
+**Best use case:** GDPR Article 22 automated decision disclosure; regulated credit limit / forbearance decisions
+**Gap codes:** `pega_api_error` (High), `pega_auth_failure` (Critical)
 
 ---
 
@@ -214,93 +189,19 @@ from primust_connectors import PegaDecisioningConnector
 **The paradox:** Prove drug interaction check ran on patient's medication list without disclosing PHI
 **Proof ceiling today:** Attestation (interaction database is proprietary)
 **Proof ceiling max:** Mathematical (dosing threshold stages — arithmetic bounds on published tables)
-**Buildable:** Now
-
-```python
-from primust_connectors import UpToDateConnector
-```
+**Gap codes:** `wolters_kluwer_api_error` (High), `wolters_kluwer_auth_failure` (Critical)
 
 ---
 
-### InterSystems HealthShare
-
-**Verifier:** CMS, Joint Commission, HIE participants, state health departments
-**The paradox:** HIPAA — prove clinical governance ran on patient data without disclosing PHI
-**Proof ceiling today:** Attestation (spec only)
-**Proof ceiling max:** Mathematical (consent verification = set membership, expiry = threshold comparison)
-**Status:** Java spec — requires Java SDK + IRIS Java Gateway configuration
-
----
-
-### Guidewire
+### Guidewire ClaimCenter
 
 **Verifier:** Reinsurers, Lloyd's syndicates, state DOI examiners
 **The use case:** Cedant proves adjudication ran per policy terms without providing reinsurer the claim file
-**Proof ceiling today:** Attestation (spec only)
-**Proof ceiling max:** Mathematical (all stages deterministic arithmetic)
-**Status:** Java spec — requires Java SDK + Guidewire Studio license
+**Python REST connector:** BUILT — 38 tests. Calls the public Guidewire ClaimCenter Cloud API (standard REST, OAuth2/JWT). No Guidewire Studio required. **Attestation ceiling** — ClaimCenter's internal logic is a black box at the REST boundary.
+**Java in-process plugin:** Spec only. Runs inside ClaimCenter's JVM. Requires Guidewire Studio + InsuranceSuite access. Achieves Mathematical ceiling. Cannot be built or tested without a Guidewire customer/partner relationship.
+**Gap codes:** `guidewire_api_error` (High), `guidewire_auth_failure` (Critical)
 
 ---
-
-### Duck Creek Technologies
-
-**Verifier:** State insurance commissioners, reinsurers
-**Proof ceiling today:** Attestation (spec only)
-**Proof ceiling max:** Mathematical (DCT Extensions in-process)
-**Status:** C# spec — requires C# SDK + DCT Extensions framework
-
----
-
-### Majesco CloudInsurer
-
-**Verifier:** State insurance commissioners, reinsurers
-**Proof ceiling today:** Attestation (spec only)
-**Proof ceiling max:** Mathematical (Majesco extension framework in-process)
-**Status:** C# spec — requires C# SDK
-
----
-
-### Sapiens DECISION
-
-**Verifier:** State insurance commissioners, Lloyd's syndicates, reinsurers
-**The use case:** Prove rating factors applied consistently across book — fair underwriting proof without disclosing applications
-**Proof ceiling today:** Attestation (spec only)
-**Proof ceiling max:** Mathematical (in-process Java via Sapiens Decision API)
-**Status:** Java spec — requires Java SDK
-
----
-
-### Sapiens ALIS
-
-**Verifier:** State insurance departments, SEC/FINRA (variable products), CMS
-**Unique angle:** FINRA Rule 2111 / Reg BI suitability — prove annuity suitability assessment ran without disclosing customer financial profile
-**Proof ceiling today:** Attestation (spec only)
-**Proof ceiling max:** Mathematical (suitability threshold comparisons are arithmetic)
-**Status:** C# spec — requires C# SDK
-
----
-
-## Fit validation
-
-```python
-from primust_connectors.fit_validation import print_summary
-
-print_summary()
-# Platform                           Fit  Score  Ready  Ceiling (today)        Max (SDK)
-# ComplyAdvantage                 STRONG    3/3      Y      attestation                —
-# NICE Actimize                   STRONG    3/3      Y      attestation     mathematical
-# FICO Blaze Advisor              STRONG    3/3      Y      attestation     mathematical
-# IBM Operational Decision Mgr    STRONG    3/3      Y      attestation     mathematical
-# Wolters Kluwer UpToDate         STRONG    3/3      Y            mixed     mathematical
-# FICO Falcon                    PARTIAL    3/3      Y      attestation     mathematical
-# Pega Customer Decision Hub     PARTIAL    3/3      Y      attestation                —
-# Guidewire ClaimCenter           STRONG    3/3      N      attestation     mathematical
-# InterSystems HealthShare        STRONG    3/3      N      attestation     mathematical
-# Sapiens DECISION                STRONG    3/3      N      attestation     mathematical
-# Duck Creek Technologies         STRONG    3/3      N      attestation     mathematical
-# Majesco CloudInsurer            STRONG    3/3      N      attestation     mathematical
-# Sapiens ALIS                    STRONG    3/3      N      attestation     mathematical
-```
 
 ## Architecture
 
@@ -313,25 +214,66 @@ Every connector follows the same three-property fit filter:
 Connectors that fail this filter are not included regardless of platform size.
 
 **Invariants enforced in every connector:**
+
 - Raw data never transits to Primust — commitment computed locally before any network call
-- Visibility defaults to `opaque` for all regulated data
-- NDA audit path available for regulators requiring full data under controlled disclosure
-- `system_unavailable` gap recorded honestly if Primust API unreachable — never silent drop
+- `visibility` defaults to `"opaque"` on all records — not configurable by caller for regulated data
+- Vendor API failures record vendor-specific gap codes (`{platform}_api_error`) — never a silent drop
+- Primust API failures are handled by SDK queue — queue loss records `system_unavailable` gap
+
+---
+
+## Gap Codes
+
+Connector-specific gap codes are part of the canonical Primust gap taxonomy (45 total types). When a vendor platform API fails, the connector records a platform-specific gap — never suppresses it.
+
+| Pattern | Severity | Trigger |
+|---|---|---|
+| `{platform}_api_error` | High | Vendor API unreachable or 5xx response |
+| `{platform}_auth_failure` | Critical | Vendor API 401/403 — credential invalid or expired |
+
+These are distinct from `system_error` (Primust-side processing failure) and `system_unavailable` (Primust API unreachable).
+
+---
+
+## Fit Validation
+
+```python
+from primust_connectors.fit_validation import print_summary
+
+print_summary()
+# Platform                         Fit      Tests  Ceiling (REST)  Max (SDK)
+# ComplyAdvantage               STRONG        48   attestation            —
+# NICE Actimize                 STRONG        51   attestation  mathematical
+# FICO Blaze Advisor            STRONG        41   attestation  mathematical
+# IBM ODM                       STRONG        41   attestation  mathematical
+# FICO Falcon                  PARTIAL        45   attestation  mathematical
+# Pega CDH                     PARTIAL        46   attestation            —
+# Wolters Kluwer UpToDate       STRONG        46   attestation  mathematical
+# Guidewire ClaimCenter         STRONG        38   attestation  mathematical*
+#
+# * Mathematical ceiling requires Java in-process SDK + Guidewire Studio license
+```
+
+---
 
 ## Contributing
 
 Connectors for additional regulated platforms welcome. A connector needs:
+
 - A `FIT_VALIDATION` dict declaring fit level, external verifier, proof ceiling, and regulatory hooks
-- Honest fit assessment — partial fits are included and flagged, not excluded
+- Honest fit assessment — partial fits are included and flagged
 - Privacy invariant: input committed locally before any external API call
 - Tests covering the commitment invariant (raw input must not appear in any transmitted payload)
+- Platform-specific gap codes following `{platform}_api_error` / `{platform}_auth_failure` pattern
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 
+---
+
 ## License
 
-Apache 2.0
+Apache-2.0
 
 ---
 
-[Primust SDK](https://github.com/primust-dev/sdk-python) · [Docs](https://docs.primust.com) · [Verify](https://verify.primust.com)
+[Primust SDK](https://github.com/primust-dev/primust-sdk) · [Docs](https://docs.primust.com) · [Verify](https://verify.primust.com)
