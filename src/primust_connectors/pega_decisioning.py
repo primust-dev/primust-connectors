@@ -1,17 +1,3 @@
-# Copyright 2026 Primust, Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """
 Primust Connector: Pega Customer Decision Hub (CDH) / Next-Best-Action
 =======================================================================
@@ -50,30 +36,11 @@ Pega NBA Decision API:
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 import httpx
-
-from primust_artifact_core.commitment import commit as _artifact_commit
-
-try:
-    import primust
-    PRIMUST_AVAILABLE = True
-except ImportError:
-    PRIMUST_AVAILABLE = False
-
-
-# ---------------------------------------------------------------------------
-# Commitment helpers — raw data never leaves this function
-# ---------------------------------------------------------------------------
-
-def _commit(data: Any) -> str:
-    """Commit via artifact-core commitment path (SHA-256 default, poseidon2 opt-in)."""
-    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
-    hash_str, _ = _artifact_commit(canonical.encode(), "sha256")
-    return hash_str
+import primust
 
 
 # ---------------------------------------------------------------------------
@@ -93,9 +60,8 @@ MANIFEST_NBA_DECISION = {
             "stage": 1,
             "name": "eligibility_evaluation",
             "type": "custom_code",
-            "proof_level": "attestation",   # Pega engine — always attestation
+            "proof_level": "attestation",  # Pega engine — always attestation
             "purpose": "Pega eligibility rules evaluate customer against action criteria",
-            "regulatory_references": ["ECOA", "GDPR Article 22"],
         },
         {
             "stage": 2,
@@ -103,7 +69,6 @@ MANIFEST_NBA_DECISION = {
             "type": "ml_model",
             "proof_level": "attestation",
             "purpose": "Pega AI model ranks eligible actions by propensity",
-            "regulatory_references": ["ECOA", "GDPR Article 22"],
         },
         {
             "stage": 3,
@@ -111,7 +76,6 @@ MANIFEST_NBA_DECISION = {
             "type": "custom_code",
             "proof_level": "attestation",
             "purpose": "Business constraints applied via Pega arbitration (budget, limits, exclusions)",
-            "regulatory_references": ["ECOA", "GDPR Article 22"],
         },
     ],
     "aggregation": {"method": "worst_case"},
@@ -134,7 +98,6 @@ MANIFEST_CREDIT_ACTION = {
             "type": "custom_code",
             "proof_level": "attestation",
             "purpose": "Bureau data pulled and evaluated by Pega rules",
-            "regulatory_references": ["ECOA", "OCC SR 11-7", "GDPR Article 22"],
         },
         {
             "stage": 2,
@@ -142,7 +105,6 @@ MANIFEST_CREDIT_ACTION = {
             "type": "custom_code",
             "proof_level": "attestation",
             "purpose": "Credit policy rules applied (exclusions, caps, product eligibility)",
-            "regulatory_references": ["ECOA", "OCC SR 11-7", "GDPR Article 22"],
         },
         {
             "stage": 3,
@@ -150,7 +112,6 @@ MANIFEST_CREDIT_ACTION = {
             "type": "custom_code",
             "proof_level": "attestation",
             "purpose": "Final credit decision output with reason codes",
-            "regulatory_references": ["ECOA", "OCC SR 11-7", "GDPR Article 22", "CCPA"],
         },
     ],
     "aggregation": {"method": "worst_case"},
@@ -173,7 +134,6 @@ MANIFEST_GDPR_AUTOMATED_DECISION = {
             "type": "custom_code",
             "proof_level": "attestation",
             "purpose": "Automated decision produced by Pega CDH without human override",
-            "regulatory_references": ["GDPR Article 22", "CCPA"],
         },
     ],
     "aggregation": {"method": "worst_case"},
@@ -185,6 +145,7 @@ MANIFEST_GDPR_AUTOMATED_DECISION = {
 # ---------------------------------------------------------------------------
 # Result dataclasses
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class PegaNBAResult:
@@ -199,7 +160,7 @@ class PegaNBAResult:
 @dataclass
 class PegaCreditDecisionResult:
     customer_id: str
-    decision: str            # "INCREASE" | "MAINTAIN" | "DECREASE" | "DECLINE" | "ROUTE_TO_REVIEW"
+    decision: str  # "INCREASE" | "MAINTAIN" | "DECREASE" | "DECLINE" | "ROUTE_TO_REVIEW"
     new_limit: Optional[float]
     reason_codes: list[str]
     raw_response: dict
@@ -209,23 +170,14 @@ class PegaCreditDecisionResult:
 class PrimustPegaRecord:
     commitment_hash: str
     record_id: str
-    proof_level: str         # always "attestation"
+    proof_level: str  # always "attestation"
     decision: str
-
-
-# ---------------------------------------------------------------------------
-# Gap codes
-# ---------------------------------------------------------------------------
-
-GAP_CODES = {
-    "pega_api_error": {"severity": "High", "description": "Pega API returned an error"},
-    "pega_auth_failure": {"severity": "Critical", "description": "Pega OAuth2 authentication failed (401)"},
-}
 
 
 # ---------------------------------------------------------------------------
 # Connector
 # ---------------------------------------------------------------------------
+
 
 class PegaDecisioningConnector:
     """
@@ -261,16 +213,16 @@ class PegaDecisioningConnector:
         self._access_token: Optional[str] = None
 
     def register_manifests(self) -> None:
-        if not PRIMUST_AVAILABLE:
-            raise RuntimeError("primust package not installed: pip install primust")
         p = primust.Pipeline(api_key=self.primust_api_key, workflow_id="manifest-registration")
-        for manifest in [MANIFEST_NBA_DECISION, MANIFEST_CREDIT_ACTION, MANIFEST_GDPR_AUTOMATED_DECISION]:
+        for manifest in [
+            MANIFEST_NBA_DECISION,
+            MANIFEST_CREDIT_ACTION,
+            MANIFEST_GDPR_AUTOMATED_DECISION,
+        ]:
             result = p.register_check(manifest)
             self._manifest_ids[manifest["name"]] = result.manifest_id
 
     def new_pipeline(self, workflow_id: str = "pega-decisions") -> primust.Pipeline:
-        if not PRIMUST_AVAILABLE:
-            raise RuntimeError("primust package not installed: pip install primust")
         return primust.Pipeline(api_key=self.primust_api_key, workflow_id=workflow_id)
 
     # ------------------------------------------------------------------
@@ -291,62 +243,29 @@ class PegaDecisioningConnector:
             raise RuntimeError("Call register_manifests() first")
 
         token = self._get_token()
-
-        try:
-            with httpx.Client() as client:
-                resp = client.post(
-                    f"{self.pega_url}/prweb/api/v1/channels/{channel}/actions",
-                    json={"customerID": customer_id, "context": context or {}},
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=10.0,
-                )
-                if resp.status_code == 401:
-                    pipeline.record(
-                        check="pega_nba_decision",
-                        manifest_id=manifest_id,
-                        input={"input_commitment": _commit({"customer_id": customer_id, "channel": channel})},
-                        check_result="error",
-                        details={"gap_code": "pega_auth_failure", "severity": "Critical"},
-                        visibility="opaque",
-                    )
-                    return PrimustPegaRecord(
-                        commitment_hash="", record_id="", proof_level="attestation", decision="ERROR",
-                    )
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPError:
-            pipeline.record(
-                check="pega_nba_decision",
-                manifest_id=manifest_id,
-                input={"input_commitment": _commit({"customer_id": customer_id, "channel": channel})},
-                check_result="error",
-                details={"gap_code": "pega_api_error", "severity": "High"},
-                visibility="opaque",
+        with httpx.Client() as client:
+            resp = client.post(
+                f"{self.pega_url}/prweb/api/v1/channels/{channel}/actions",
+                json={"customerID": customer_id, "context": context or {}},
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10.0,
             )
-            return PrimustPegaRecord(
-                commitment_hash="", record_id="", proof_level="attestation", decision="ERROR",
-            )
+            resp.raise_for_status()
+            data = resp.json()
 
         result = self._parse_nba_response(data, customer_id)
-
-        # Context attribute schema keys only — values never in commitment
-        input_commitment = _commit({
-            "customer_id": customer_id,
-            "channel": channel,
-            "context_keys": sorted((context or {}).keys()),
-        })
 
         record = pipeline.record(
             check="pega_nba_decision",
             manifest_id=manifest_id,
-            input={"input_commitment": input_commitment},
+            input=f"{customer_id}|{channel}",
             check_result="pass",
             details={
                 "customer_id": customer_id,
                 "top_action": result.top_action,
                 "action_group": result.action_group,
             },
-            visibility="opaque",
+            visibility=visibility,
         )
 
         return PrimustPegaRecord(
@@ -364,7 +283,7 @@ class PegaDecisioningConnector:
         self,
         pipeline: primust.Pipeline,
         customer_id: str,
-        decision_type: str,      # "CREDIT_LIMIT_REVIEW" | "HARDSHIP_FORBEARANCE"
+        decision_type: str,  # "CREDIT_LIMIT_REVIEW" | "HARDSHIP_FORBEARANCE"
         customer_context: dict,  # income, bureau score, delinquency — committed locally
         visibility: str = "opaque",
     ) -> PrimustPegaRecord:
@@ -382,59 +301,29 @@ class PegaDecisioningConnector:
             raise RuntimeError("Call register_manifests() first")
 
         token = self._get_token()
-
-        try:
-            with httpx.Client() as client:
-                resp = client.post(
-                    f"{self.pega_url}/prweb/api/application/v2/cases",
-                    json={
-                        "caseTypeID": f"BANK-CREDITOPS-WORK-{decision_type}",
-                        "content": {"customerID": customer_id, **customer_context},
-                    },
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=15.0,
-                )
-                if resp.status_code == 401:
-                    pipeline.record(
-                        check="pega_credit_limit_decision",
-                        manifest_id=manifest_id,
-                        input={"input_commitment": _commit({"customer_id": customer_id, "decision_type": decision_type, "context_keys": sorted(customer_context.keys())})},
-                        check_result="error",
-                        details={"gap_code": "pega_auth_failure", "severity": "Critical"},
-                        visibility="opaque",
-                    )
-                    return PrimustPegaRecord(
-                        commitment_hash="", record_id="", proof_level="attestation", decision="ERROR",
-                    )
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPError:
-            pipeline.record(
-                check="pega_credit_limit_decision",
-                manifest_id=manifest_id,
-                input={"input_commitment": _commit({"customer_id": customer_id, "decision_type": decision_type, "context_keys": sorted(customer_context.keys())})},
-                check_result="error",
-                details={"gap_code": "pega_api_error", "severity": "High"},
-                visibility="opaque",
+        with httpx.Client() as client:
+            resp = client.post(
+                f"{self.pega_url}/prweb/api/application/v2/cases",
+                json={
+                    "caseTypeID": f"BANK-CREDITOPS-WORK-{decision_type}",
+                    "content": {"customerID": customer_id, **customer_context},
+                },
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=15.0,
             )
-            return PrimustPegaRecord(
-                commitment_hash="", record_id="", proof_level="attestation", decision="ERROR",
-            )
+            resp.raise_for_status()
+            data = resp.json()
 
         decision_result = self._parse_credit_response(data, customer_id)
         check_result = "pass" if decision_result.decision not in ("DECLINE",) else "fail"
 
-        # Context attribute schema keys only — values never in commitment
-        input_commitment = _commit({
-            "customer_id": customer_id,
-            "decision_type": decision_type,
-            "context_keys": sorted(customer_context.keys()),
-        })
-
         record = pipeline.record(
             check="pega_credit_limit_decision",
             manifest_id=manifest_id,
-            input={"input_commitment": input_commitment},
+            input={
+                **{"customer_id": customer_id, "decision_type": decision_type},
+                **customer_context,
+            },
             check_result=check_result,
             details={
                 "customer_id": customer_id,
@@ -442,7 +331,7 @@ class PegaDecisioningConnector:
                 "reason_code_count": len(decision_result.reason_codes),
                 # reason codes NOT included — reveals decision criteria
             },
-            visibility="opaque",
+            visibility=visibility,
         )
 
         return PrimustPegaRecord(
@@ -453,82 +342,24 @@ class PegaDecisioningConnector:
         )
 
     # ------------------------------------------------------------------
-    # Case decision record (standalone)
-    # ------------------------------------------------------------------
-
-    def record_case_decision(
-        self,
-        pipeline: primust.Pipeline,
-        case_id: str,
-        case_type: str,
-        decision: str,
-        context_keys: list[str],
-        manifest_name: str = "pega_nba_decision",
-        visibility: str = "opaque",
-    ) -> PrimustPegaRecord:
-        """
-        Record a Pega case decision as a VPEC record.
-
-        Generic method for any Pega case outcome — NBA, credit, GDPR, etc.
-        Caller provides the decision already obtained from Pega; this method
-        only commits and records.
-
-        context_keys: list of attribute names (NOT values) present in the case.
-        """
-        manifest_id = self._manifest_ids.get(manifest_name)
-        if not manifest_id:
-            raise RuntimeError(f"Manifest '{manifest_name}' not registered. Call register_manifests() first")
-
-        input_commitment = _commit({
-            "case_id": case_id,
-            "case_type": case_type,
-            "context_keys": sorted(context_keys),
-        })
-
-        record = pipeline.record(
-            check=manifest_name,
-            manifest_id=manifest_id,
-            input={"input_commitment": input_commitment},
-            check_result="pass",
-            details={
-                "case_id": case_id,
-                "case_type": case_type,
-                "decision": decision,
-            },
-            visibility="opaque",
-        )
-
-        return PrimustPegaRecord(
-            commitment_hash=record.commitment_hash,
-            record_id=record.record_id,
-            proof_level=record.proof_level,
-            decision=decision,
-        )
-
-    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     def _get_token(self) -> str:
         if self._access_token:
             return self._access_token
-        try:
-            with httpx.Client() as client:
-                resp = client.post(
-                    f"{self.pega_url}/prweb/PRRestService/oauth2/v1/token",
-                    data={
-                        "grant_type": "client_credentials",
-                        "client_id": self.pega_client_id,
-                        "client_secret": self.pega_client_secret,
-                    },
-                )
-                if resp.status_code == 401:
-                    raise PegaAuthError("OAuth2 token request returned 401")
-                resp.raise_for_status()
-                self._access_token = resp.json()["access_token"]
-                return self._access_token
-        except httpx.HTTPError as e:
-            raise PegaAuthError(f"OAuth2 token request failed: {e}") from e
+        with httpx.Client() as client:
+            resp = client.post(
+                f"{self.pega_url}/prweb/PRRestService/oauth2/v1/token",
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": self.pega_client_id,
+                    "client_secret": self.pega_client_secret,
+                },
+            )
+            resp.raise_for_status()
+            self._access_token = resp.json()["access_token"]
+            return self._access_token
 
     def _parse_nba_response(self, data: dict, customer_id: str) -> PegaNBAResult:
         actions = data.get("actions", [{}])
@@ -553,17 +384,6 @@ class PegaDecisioningConnector:
         )
 
 
-# ---------------------------------------------------------------------------
-# Custom exceptions
-# ---------------------------------------------------------------------------
-
-class PegaAuthError(Exception):
-    pass
-
-class PegaAPIError(Exception):
-    pass
-
-
 FIT_VALIDATION = {
     "platform": "Pega Customer Decision Hub",
     "category": "Next-Best-Action / Regulated Decisioning",
@@ -581,8 +401,7 @@ FIT_VALIDATION = {
         "GDPR Art. 22: proves decision was automated, not human override. "
         "OCC exam: proves consistent decisioning without disclosing strategy."
     ),
-    "proof_ceiling_today": "attestation",
-    "proof_ceiling_notes": "Permanent — Pega engine is opaque, Java SDK does not change ceiling",
+    "proof_ceiling": "attestation (permanent — Pega engine is opaque, Java SDK irrelevant)",
     "java_sdk_changes_ceiling": False,  # explicitly called out
     "cross_run_consistency_applicable": True,
     "buildable_today": True,

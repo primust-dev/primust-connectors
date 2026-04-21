@@ -1,17 +1,3 @@
-# Copyright 2026 Primust, Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """
 Guidewire ClaimCenter Connector for Primust
 
@@ -50,8 +36,9 @@ from primust_artifact_core.commitment import commit as _artifact_commit
 
 try:
     import primust
-    from primust import Pipeline, Run
-    from primust.models import RecordResult, VPEC, ProofLevel
+    from primust import Pipeline, Run, open_run  # noqa: F401
+    from primust.models import RecordResult, VPEC, ProofLevel  # noqa: F401
+
     PRIMUST_AVAILABLE = True
 except ImportError:
     PRIMUST_AVAILABLE = False
@@ -93,8 +80,10 @@ FIT_VALIDATION = {
 # Guidewire Cloud API client
 # ---------------------------------------------------------------------------
 
+
 class GuidewireAuthError(Exception):
     pass
+
 
 class GuidewireAPIError(Exception):
     pass
@@ -117,7 +106,7 @@ class GuidewireClient:
       GET  /rest/common/v1/policies/{id}         — policy details (coverage)
     """
 
-    base_url: str          # e.g. "https://acme.guidewire.com"
+    base_url: str  # e.g. "https://acme.guidewire.com"
     client_id: str
     client_secret: str
     timeout: int = 30
@@ -138,9 +127,7 @@ class GuidewireClient:
             timeout=self.timeout,
         )
         if resp.status_code != 200:
-            raise GuidewireAuthError(
-                f"Token request failed: {resp.status_code} {resp.text[:200]}"
-            )
+            raise GuidewireAuthError(f"Token request failed: {resp.status_code} {resp.text[:200]}")
         data = resp.json()
         self._token = data["access_token"]
         self._token_expiry = time.time() + data.get("expires_in", 3600)
@@ -164,9 +151,7 @@ class GuidewireClient:
                 timeout=self.timeout,
             )
         if resp.status_code not in (200, 206):
-            raise GuidewireAPIError(
-                f"GET {path} returned {resp.status_code}: {resp.text[:200]}"
-            )
+            raise GuidewireAPIError(f"GET {path} returned {resp.status_code}: {resp.text[:200]}")
         return resp.json()
 
     # -----------------------------------------------------------------------
@@ -204,6 +189,7 @@ class GuidewireClient:
 # Commitment helpers — raw data never leaves this function
 # ---------------------------------------------------------------------------
 
+
 def _commit(data: Any) -> str:
     """Commit via artifact-core commitment path (SHA-256 default, poseidon2 opt-in)."""
     canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
@@ -218,31 +204,51 @@ def _bounded_claim_metadata(claim: dict) -> dict:
     Claim contents, claimant PII, and reserve amounts stay local.
     """
     attrs = claim.get("data", {}).get("attributes", claim.get("attributes", {}))
-    return {
-        "claim_state": attrs.get("state"),          # e.g. "open", "closed"
-        "lob": attrs.get("lineOfBusiness"),          # e.g. "auto", "property"
-        "jurisdiction": attrs.get("jurisdiction"),
-        "loss_type": attrs.get("lossType"),
+    metadata: dict[str, Any] = {
         "coverage_type_count": len(attrs.get("coverages", [])),
-        "exposure_count": attrs.get("exposureCount"),
     }
+
+    exposure_count = attrs.get("exposureCount")
+    if isinstance(exposure_count, (int, float)):
+        metadata["exposure_count"] = int(exposure_count)
+
+    for source_key, target_key in (
+        ("state", "claim_state_hash"),
+        ("lineOfBusiness", "lob_hash"),
+        ("jurisdiction", "jurisdiction_hash"),
+        ("lossType", "loss_type_hash"),
+    ):
+        value = attrs.get(source_key)
+        if isinstance(value, str) and value:
+            metadata[target_key] = _commit(value)
+
+    return metadata
 
 
 def _bounded_payment_metadata(payments: list[dict]) -> dict:
     """Non-sensitive payment summary. No amounts, no claimant IDs."""
+    statuses = sorted(
+        {
+            status
+            for payment in payments
+            if isinstance(
+                status := payment.get("attributes", {}).get("status"),
+                str,
+            )
+            and status
+        }
+    )
     return {
         "payment_count": len(payments),
-        "statuses": list({
-            p.get("attributes", {}).get("status")
-            for p in payments
-            if p.get("attributes", {}).get("status")
-        }),
+        "status_count": len(statuses),
+        "status_set_hash": _commit(statuses),
     }
 
 
 # ---------------------------------------------------------------------------
 # Arithmetic stages — Mathematical proof ceiling
 # ---------------------------------------------------------------------------
+
 
 def _coverage_limit_check(
     requested_amount: float,
@@ -300,6 +306,7 @@ def _reserve_adequacy_check(
 # Connector
 # ---------------------------------------------------------------------------
 
+
 class GuidewireClaimCenterConnector:
     """
     Instruments Guidewire ClaimCenter claims adjudication with Primust VPEC issuance.
@@ -318,7 +325,8 @@ class GuidewireClaimCenterConnector:
             gw_base_url="https://acme.guidewire.com",
             gw_client_id="primust-service",
             gw_client_secret="...",
-            primust_api_key="pk_live_...",
+            # Set PRIMUST_API_KEY=your_key in your .env file or environment
+            primust_api_key=os.environ["PRIMUST_API_KEY"],
         )
         connector.register_manifests()
         vpec = connector.adjudicate_claim(
@@ -447,6 +455,15 @@ class GuidewireClaimCenterConnector:
             _base_url=self.primust_base_url,
         )
 
+    def new_run(self) -> "Run":
+        if not PRIMUST_AVAILABLE:
+            raise RuntimeError("primust package not installed: pip install primust")
+        return primust.open_run(
+            api_key=self.primust_api_key,
+            workflow_id=self.WORKFLOW_ID,
+            _base_url=self.primust_base_url,
+        )
+
     def register_manifests(self) -> None:
         """Register all manifests idempotently. Call once at startup."""
         p = self.new_pipeline()
@@ -494,9 +511,9 @@ class GuidewireClaimCenterConnector:
             VPEC proving adjudication ran per policy terms.
         """
         if pipeline is None:
-            pipeline = self.new_pipeline()
-
-        run = pipeline.open()
+            run = self.new_run()
+        else:
+            run = pipeline.open()
 
         try:
             # ------------------------------------------------------------------
@@ -521,9 +538,7 @@ class GuidewireClaimCenterConnector:
             policy_attrs = {}
             if policy_id:
                 policy_data = self.gw.get_policy(policy_id)
-                policy_attrs = (
-                    policy_data.get("data", {}).get("attributes", {})
-                )
+                policy_attrs = policy_data.get("data", {}).get("attributes", {})
 
             # Commit full claim + policy locally — never sent to Primust
             claim_commitment = _commit(claim_data)
@@ -551,13 +566,15 @@ class GuidewireClaimCenterConnector:
             )
 
             # Commit the raw amounts locally
-            amounts_commitment = _commit({
-                "requested_payment": requested_payment,
-                "policy_limit": policy_limit,
-                "deductible": deductible,
-                "claim_commitment": claim_commitment,
-                "policy_commitment": policy_commitment,
-            })
+            amounts_commitment = _commit(
+                {
+                    "requested_payment": requested_payment,
+                    "policy_limit": policy_limit,
+                    "deductible": deductible,
+                    "claim_commitment": claim_commitment,
+                    "policy_commitment": policy_commitment,
+                }
+            )
 
             run.record(
                 check="coverage_verification",
@@ -567,7 +584,12 @@ class GuidewireClaimCenterConnector:
                 details={
                     "within_limit": coverage_result["within_limit"],
                     "deductible_applied": coverage_result["deductible_applied"],
-                    "utilization_band": coverage_result["utilization_band"],
+                    **(
+                        {"utilization_band_hash": _commit(coverage_result["utilization_band"])}
+                        if isinstance(coverage_result["utilization_band"], str)
+                        and coverage_result["utilization_band"]
+                        else {}
+                    ),
                     # No monetary amounts in details — those stay in local commitment
                 },
                 visibility="opaque",
@@ -582,12 +604,10 @@ class GuidewireClaimCenterConnector:
             # ------------------------------------------------------------------
             exposures = self.gw.get_exposures(claim_id)
             total_reserve = sum(
-                float(e.get("attributes", {}).get("reserveAmount", 0) or 0)
-                for e in exposures
+                float(e.get("attributes", {}).get("reserveAmount", 0) or 0) for e in exposures
             )
             total_incurred = sum(
-                float(e.get("attributes", {}).get("incurredAmount", 0) or 0)
-                for e in exposures
+                float(e.get("attributes", {}).get("incurredAmount", 0) or 0) for e in exposures
             )
 
             reserve_result = _reserve_adequacy_check(
@@ -595,12 +615,14 @@ class GuidewireClaimCenterConnector:
                 incurred_amount=total_incurred,
             )
 
-            reserve_commitment = _commit({
-                "total_reserve": total_reserve,
-                "total_incurred": total_incurred,
-                "exposure_count": len(exposures),
-                "claim_commitment": claim_commitment,
-            })
+            reserve_commitment = _commit(
+                {
+                    "total_reserve": total_reserve,
+                    "total_incurred": total_incurred,
+                    "exposure_count": len(exposures),
+                    "claim_commitment": claim_commitment,
+                }
+            )
 
             run.record(
                 check="reserve_adequacy",
@@ -619,11 +641,13 @@ class GuidewireClaimCenterConnector:
             # Stage 4: Adjudication decision + payment (Attestation)
             # ------------------------------------------------------------------
             payments = self.gw.get_payments(claim_id)
-            payment_commitment = _commit({
-                "payments": payments,
-                "requested_payment": requested_payment,
-                "claim_commitment": claim_commitment,
-            })
+            payment_commitment = _commit(
+                {
+                    "payments": payments,
+                    "requested_payment": requested_payment,
+                    "claim_commitment": claim_commitment,
+                }
+            )
 
             run.record(
                 check="adjudication_decision",
@@ -641,7 +665,7 @@ class GuidewireClaimCenterConnector:
                 manifest_id=self._manifest_ids.get("claim_retrieval", ""),
                 check_result="error",
                 input={"error": _commit({"error_type": type(e).__name__})},
-                details={"error_type": "guidewire_api_error"},
+                details={"api_error": True},
                 visibility="opaque",
             )
 
@@ -666,12 +690,14 @@ class GuidewireClaimCenterConnector:
         """
         run = pipeline.open()
         result = _coverage_limit_check(requested_payment, policy_limit, deductible)
-        amounts_commitment = _commit({
-            "claim_id_hash": _commit(claim_id),
-            "requested_payment": requested_payment,
-            "policy_limit": policy_limit,
-            "deductible": deductible,
-        })
+        amounts_commitment = _commit(
+            {
+                "claim_id_hash": _commit(claim_id),
+                "requested_payment": requested_payment,
+                "policy_limit": policy_limit,
+                "deductible": deductible,
+            }
+        )
         return run.record(
             check="coverage_verification",
             manifest_id=self._manifest_ids.get("coverage_verification", ""),
@@ -680,7 +706,11 @@ class GuidewireClaimCenterConnector:
             details={
                 "within_limit": result["within_limit"],
                 "deductible_applied": result["deductible_applied"],
-                "utilization_band": result["utilization_band"],
+                **(
+                    {"utilization_band_hash": _commit(result["utilization_band"])}
+                    if isinstance(result["utilization_band"], str) and result["utilization_band"]
+                    else {}
+                ),
             },
             visibility="opaque",
         )

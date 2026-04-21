@@ -1,17 +1,3 @@
-# Copyright 2026 Primust, Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """
 Tests for Guidewire ClaimCenter connector.
 
@@ -21,12 +7,10 @@ must never appear in any payload sent to Primust.
 """
 
 import json
-import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from primust_connectors.guidewire import (
     GuidewireClaimCenterConnector,
-    GuidewireClient,
     FIT_VALIDATION,
     _coverage_limit_check,
     _reserve_adequacy_check,
@@ -54,9 +38,7 @@ MOCK_CLAIM = {
             "claimantName": "SENSITIVE_PII_DO_NOT_TRANSIT",
             "claimantSSN": "SENSITIVE_PII_DO_NOT_TRANSIT",
         },
-        "relationships": {
-            "policy": {"data": {"id": "POL:99999"}}
-        },
+        "relationships": {"policy": {"data": {"id": "POL:99999"}}},
     }
 }
 
@@ -68,7 +50,7 @@ MOCK_POLICY = {
             "policyNumber": "AUTO-2026-001",
             "effectiveDate": "2026-01-01",
             "expirationDate": "2027-01-01",
-        }
+        },
     }
 }
 
@@ -100,9 +82,7 @@ MOCK_PAYMENTS = [
     }
 ]
 
-MOCK_ACTIVITIES = [
-    {"attributes": {"activityType": "review", "status": "complete"}}
-]
+MOCK_ACTIVITIES = [{"attributes": {"activityType": "review", "status": "complete"}}]
 
 
 def _make_connector() -> GuidewireClaimCenterConnector:
@@ -110,7 +90,7 @@ def _make_connector() -> GuidewireClaimCenterConnector:
         gw_base_url="https://test.guidewire.com",
         gw_client_id="test-client",
         gw_client_secret="test-secret",
-        primust_api_key="pk_sb_abc123",
+        primust_api_key="pk_test_abc123",
     )
     connector._manifest_ids = {
         "claim_retrieval": "sha256:manifest_retrieval",
@@ -124,6 +104,7 @@ def _make_connector() -> GuidewireClaimCenterConnector:
 # ---------------------------------------------------------------------------
 # Fit validation
 # ---------------------------------------------------------------------------
+
 
 class TestFitValidation:
     def test_fit_level_strong(self):
@@ -139,6 +120,24 @@ class TestFitValidation:
     def test_data_cannot_be_disclosed(self):
         assert FIT_VALIDATION["data_cannot_be_disclosed"] is True
 
+
+class TestRunBootstrap:
+    def test_new_run_uses_open_run_helper(self):
+        connector = _make_connector()
+        mock_run = MagicMock()
+
+        with patch(
+            "primust_connectors.guidewire.primust.open_run", return_value=mock_run
+        ) as open_run_mock:
+            result = connector.new_run()
+
+        assert result is mock_run
+        open_run_mock.assert_called_once_with(
+            api_key="pk_test_abc123",
+            workflow_id=connector.WORKFLOW_ID,
+            _base_url=connector.primust_base_url,
+        )
+
     def test_external_verifier_present(self):
         assert FIT_VALIDATION["external_verifier"]
         assert "reinsurer" in FIT_VALIDATION["external_verifier"].lower()
@@ -153,6 +152,7 @@ class TestFitValidation:
 # ---------------------------------------------------------------------------
 # Arithmetic stages — Mathematical proof level
 # ---------------------------------------------------------------------------
+
 
 class TestCoverageLimitCheck:
     def test_within_limit_passes(self):
@@ -224,6 +224,7 @@ class TestReserveAdequacyCheck:
 # Bounded metadata — no sensitive data in transit payloads
 # ---------------------------------------------------------------------------
 
+
 class TestBoundedMetadata:
     def test_bounded_claim_metadata_safe_fields_only(self):
         meta = _bounded_claim_metadata(MOCK_CLAIM)
@@ -234,9 +235,9 @@ class TestBoundedMetadata:
 
     def test_bounded_claim_metadata_has_expected_fields(self):
         meta = _bounded_claim_metadata(MOCK_CLAIM)
-        assert meta["claim_state"] == "open"
-        assert meta["lob"] == "auto"
-        assert meta["jurisdiction"] == "CA"
+        assert meta["claim_state_hash"].startswith("sha256:")
+        assert meta["lob_hash"].startswith("sha256:")
+        assert meta["jurisdiction_hash"].startswith("sha256:")
         assert meta["coverage_type_count"] == 2
 
     def test_bounded_payment_metadata_no_amounts(self):
@@ -249,12 +250,14 @@ class TestBoundedMetadata:
     def test_bounded_payment_metadata_has_count(self):
         meta = _bounded_payment_metadata(MOCK_PAYMENTS)
         assert meta["payment_count"] == 1
-        assert "issued" in meta["statuses"]
+        assert meta["status_count"] == 1
+        assert meta["status_set_hash"].startswith("sha256:")
 
 
 # ---------------------------------------------------------------------------
 # Privacy invariant — raw data never transits to Primust
 # ---------------------------------------------------------------------------
+
 
 class TestPrivacyInvariant:
     """
@@ -267,6 +270,7 @@ class TestPrivacyInvariant:
         recorded = []
 
         mock_run = MagicMock()
+
         def capture_record(**kwargs):
             recorded.append(kwargs)
             return MagicMock(
@@ -275,13 +279,16 @@ class TestPrivacyInvariant:
                 proof_level="attestation",
                 queued=False,
             )
+
         mock_run.record = capture_record
-        mock_run.close = MagicMock(return_value=MagicMock(
-            vpec_id="vpec_001",
-            proof_level_floor="attestation",
-            chain_intact=True,
-            gaps=[],
-        ))
+        mock_run.close = MagicMock(
+            return_value=MagicMock(
+                vpec_id="vpec_001",
+                proof_level="attestation",
+                chain_intact=True,
+                governance_gaps=[],
+            )
+        )
 
         mock_pipeline = MagicMock()
         mock_pipeline.open = MagicMock(return_value=mock_run)
@@ -353,28 +360,26 @@ class TestPrivacyInvariant:
 # Workflow correctness
 # ---------------------------------------------------------------------------
 
+
 class TestWorkflowCorrectness:
     def _run_workflow(self, requested_payment=40_000.00, policy_limit=100_000.00):
         connector = _make_connector()
         records = []
 
         mock_run = MagicMock()
+
         def capture_record(**kwargs):
             records.append(kwargs)
             return MagicMock(commitment_hash="sha256:abc", record_id="rec_001")
+
         mock_run.record = capture_record
-        mock_run.close = MagicMock(return_value=MagicMock(
-            vpec_id="vpec_001", chain_intact=True, gaps=[]
-        ))
+        mock_run.close = MagicMock(
+            return_value=MagicMock(vpec_id="vpec_001", chain_intact=True, governance_gaps=[])
+        )
         mock_pipeline = MagicMock()
         mock_pipeline.open = MagicMock(return_value=mock_run)
 
-        mock_policy = {
-            "data": {
-                "id": "POL:99999",
-                "attributes": {"totalLimit": policy_limit}
-            }
-        }
+        mock_policy = {"data": {"id": "POL:99999", "attributes": {"totalLimit": policy_limit}}}
 
         with patch.object(connector.gw, "get_claim", return_value=MOCK_CLAIM):
             with patch.object(connector.gw, "get_policy", return_value=mock_policy):
@@ -427,6 +432,7 @@ class TestWorkflowCorrectness:
 # ---------------------------------------------------------------------------
 # Commitment determinism
 # ---------------------------------------------------------------------------
+
 
 class TestCommitment:
     def test_same_input_same_commitment(self):

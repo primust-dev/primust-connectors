@@ -1,17 +1,3 @@
-# Copyright 2026 Primust, Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """
 Primust Connector: NICE Actimize AML/Fraud Detection
 =====================================================
@@ -25,42 +11,25 @@ Proof ceiling (REST/today): Attestation for ML components,
                              (velocity counts, amount thresholds)
 Proof ceiling (Java SDK, post P10-D): Mathematical across deterministic stages
 
-Three surfaces:
-  1. ActimizeAlertEvaluator — SAM transaction alert evaluation (Attestation)
-  2. ActimizeSARWorkflow — SAR filing decision (Witnessed)
-  3. ActimizeKYCAssessor — KYC/CDD assessment (Attestation)
+Key distinction from ComplyAdvantage:
+  ComplyAdvantage = entity screening (who is this person?)
+  Actimize = transaction behavior monitoring (what is this person doing?)
+  Both hit the AML paradox. Different verifier concern:
+    - ComplyAdvantage: is this entity on a watchlist?
+    - Actimize: is this transaction pattern suspicious per our monitoring rules?
+  Revealing Actimize velocity thresholds enables structuring attacks (BSA §5324).
+  GEP proves monitoring ran without revealing the thresholds.
 
 NICE Actimize REST API: Actimize Risk Case Manager API + ActOne REST API
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 import httpx
-
-from primust_artifact_core.commitment import commit as _artifact_commit
-
-try:
-    import primust
-    from primust import Pipeline, Run
-    from primust.models import RecordResult, VPEC, ProofLevel
-    PRIMUST_AVAILABLE = True
-except ImportError:
-    PRIMUST_AVAILABLE = False
-
-
-# ---------------------------------------------------------------------------
-# Commitment — raw data never leaves customer environment
-# ---------------------------------------------------------------------------
-
-def _commit(data: Any) -> str:
-    """Commit via artifact-core. Only the hash transits to Primust."""
-    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
-    hash_str, _ = _artifact_commit(canonical.encode(), "sha256")
-    return hash_str
+import primust
 
 
 # ---------------------------------------------------------------------------
@@ -79,10 +48,15 @@ MANIFEST_TRANSACTION_MONITORING = {
             "stage": 1,
             "name": "velocity_rule",
             "type": "deterministic_rule",
+            # Attestation today (REST). Mathematical post-Java SDK in-process.
+            # Velocity = count(transactions, 24h window) >= threshold
+            # This IS an arithmetic constraint — expressible as Noir circuit.
             "proof_level": "attestation",
             "method": "threshold_comparison",
             "purpose": "Transaction count within rolling time window vs configured threshold",
-            "regulatory_references": ["bsa_aml", "fincen_31cfr1020"],
+            # NOTE: threshold value NOT included in manifest — revealing enables structuring
+            # This is the correct visibility choice even at Mathematical level:
+            # the manifest proves a threshold check ran; threshold value = opaque config
         },
         {
             "stage": 2,
@@ -91,7 +65,8 @@ MANIFEST_TRANSACTION_MONITORING = {
             "proof_level": "attestation",
             "method": "threshold_comparison",
             "purpose": "Transaction amount vs regulatory reporting threshold ($10,000 CTR)",
-            "regulatory_references": ["bsa_aml", "31cfr1020_315_ctr"],
+            # CTR threshold ($10k) IS public — could be transparent
+            # SAR thresholds are NOT public — must be opaque
         },
         {
             "stage": 3,
@@ -103,15 +78,13 @@ MANIFEST_TRANSACTION_MONITORING = {
                 "Multiple sub-threshold transactions summing to reportable amount "
                 "(BSA §5324 structuring pattern)"
             ),
-            "regulatory_references": ["bsa_aml", "bsa_5324_structuring"],
         },
         {
             "stage": 4,
             "name": "behavioral_ml_model",
             "type": "ml_model",
-            "proof_level": "attestation",
+            "proof_level": "attestation",  # Actimize ML is proprietary, always attestation
             "purpose": "Behavioral anomaly score — deviation from account baseline",
-            "regulatory_references": ["bsa_aml"],
         },
         {
             "stage": 5,
@@ -120,11 +93,10 @@ MANIFEST_TRANSACTION_MONITORING = {
             "proof_level": "attestation",
             "method": "threshold_comparison",
             "purpose": "Weighted composite risk score >= alert generation threshold",
-            "regulatory_references": ["bsa_aml", "fincen_31cfr1020"],
         },
     ],
     "aggregation": {"method": "worst_case"},
-    "freshness_threshold_hours": 1,
+    "freshness_threshold_hours": 1,  # transaction monitoring — near-realtime
     "publisher": "your-org-id",
 }
 
@@ -143,7 +115,6 @@ MANIFEST_KYC_REFRESH = {
             "proof_level": "attestation",
             "method": "threshold_comparison",
             "purpose": "Customer risk score vs KYC refresh trigger threshold",
-            "regulatory_references": ["bsa_cdd_rule", "fatf_rec10"],
         },
         {
             "stage": 2,
@@ -152,7 +123,6 @@ MANIFEST_KYC_REFRESH = {
             "proof_level": "attestation",
             "method": "set_membership",
             "purpose": "Customer risk factors present in EDD trigger criteria",
-            "regulatory_references": ["bsa_cdd_rule", "fatf_rec10"],
         },
     ],
     "aggregation": {"method": "worst_case"},
@@ -164,7 +134,7 @@ MANIFEST_SAR_DECISION = {
     "name": "actimize_sar_decision",
     "description": (
         "SAR (Suspicious Activity Report) filing decision process. "
-        "Analyst review + determination to file or no-file. "
+        "Analyst review + determination to file or no-file."
         "Uses Witnessed level — human analyst decision with VDF time proof."
     ),
     "stages": [
@@ -174,16 +144,16 @@ MANIFEST_SAR_DECISION = {
             "type": "deterministic_rule",
             "proof_level": "attestation",
             "purpose": "Alert reviewed against case evidence",
-            "regulatory_references": ["bsa_sar_31_cfr_1020", "fincen_sar_reporting"],
         },
         {
             "stage": 2,
             "name": "analyst_determination",
+            # This is a Witnessed level stage — human made a decision
+            # rationale_hash required by BSA/AML compliance programs
             "type": "custom_code",
             "proof_level": "witnessed",
             "purpose": "BSA officer determination: file SAR or close alert with documented rationale",
             "reference": "BSA/AML Compliance Program — 31 CFR §1020.320",
-            "regulatory_references": ["bsa_sar_31_cfr_1020", "fincen_sar_reporting", "finra_aml"],
         },
     ],
     "aggregation": {"method": "worst_case"},
@@ -196,10 +166,11 @@ MANIFEST_SAR_DECISION = {
 # Result dataclasses
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ActimizeAlertResult:
     alert_id: str
-    alert_type: str          # "VELOCITY" | "STRUCTURING" | "BEHAVIORAL" | "COMPOSITE"
+    alert_type: str  # "VELOCITY" | "STRUCTURING" | "BEHAVIORAL" | "COMPOSITE"
     risk_score: float
     alert_generated: bool
     rule_codes_fired: list[str]
@@ -207,22 +178,11 @@ class ActimizeAlertResult:
 
 
 @dataclass
-class KYCAssessmentResult:
-    assessment_id: str
-    risk_rating: str
-    decision: str
-    rules_applied_count: int
-    raw_response: dict
-
-
-@dataclass
 class SARDecisionResult:
     case_id: str
-    determination: str       # "FILE" | "NO_FILE" | "PENDING"
+    determination: str  # "FILE" | "NO_FILE" | "PENDING"
     analyst_id: str
-    rationale_hash: Optional[str]
-    check_open_tst: Optional[str] = None   # RFC 3161 timestamp — review start
-    check_close_tst: Optional[str] = None  # RFC 3161 timestamp — review end
+    rationale_hash: Optional[str]  # set when using open_review()
 
 
 @dataclass
@@ -234,422 +194,33 @@ class PrimustAMLRecord:
     vpec_id: Optional[str] = None
 
 
-@dataclass
-class PrimustKYCRecord:
-    commitment_hash: str
-    record_id: str
-    proof_level: str
-    decision: str
-
-
 # ---------------------------------------------------------------------------
-# Surface 1: Transaction Alert Evaluation (Attestation ceiling)
+# Connector
 # ---------------------------------------------------------------------------
 
-class ActimizeAlertEvaluator:
-    """
-    Wraps NICE Actimize SAM transaction monitoring.
-
-    POST /sam/api/v2/alerts/evaluate
-
-    Proof ceiling: Attestation (ML model evaluation, not interceptable via REST).
-    Gap codes:
-      actimize_api_error (High) — SAM API call failed
-      actimize_auth_failure (Critical) — API key rejected
-      actimize_alert_suppressed (High) — alert suppressed without explanation
-    Framework tags: ['bsa_aml', 'fincen_31cfr1020']
-    """
-
-    def __init__(
-        self,
-        base_url: str,
-        api_key: str,
-        primust_api_key: str,
-        alert_score_threshold: float = 0.65,
-    ):
-        self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
-        self.primust_api_key = primust_api_key
-        self.alert_score_threshold = alert_score_threshold
-        self._manifest_ids: dict[str, str] = {}
-
-    def register_manifests(self) -> None:
-        p = primust.Pipeline(api_key=self.primust_api_key, workflow_id="manifest-registration")
-        result = p.register_check(MANIFEST_TRANSACTION_MONITORING)
-        self._manifest_ids[MANIFEST_TRANSACTION_MONITORING["name"]] = result.manifest_id
-
-    def evaluate_transaction(
-        self,
-        run: Any,
-        transaction_id: str,
-        account_id: str,
-        amount: float,
-        currency: str,
-        merchant_category: str = "",
-        transaction_type: str = "",
-        counterparty_id: Optional[str] = None,
-    ) -> PrimustAMLRecord:
-        """
-        Evaluate a transaction and record governance proof.
-
-        Input commitment fields: transaction_id, account_id, currency,
-                                  merchant_category, transaction_type
-        CRITICAL: amount is committed but NOT in commitment fields — it's in
-        the full input blob that gets hashed, never sent as a named field.
-        """
-        manifest_id = self._manifest_ids.get("actimize_transaction_monitoring")
-        if not manifest_id:
-            raise RuntimeError("Call register_manifests() first")
-
-        # Compute input commitment — structured fields only, no PII values
-        input_commitment = _commit({
-            "transaction_id": transaction_id,
-            "account_id": account_id,
-            "currency": currency,
-            "merchant_category": merchant_category,
-            "transaction_type": transaction_type,
-        })
-
-        # Call Actimize SAM REST API
-        try:
-            with httpx.Client() as client:
-                resp = client.post(
-                    f"{self.base_url}/monitoring/transactions",
-                    json={
-                        "accountId": account_id,
-                        "transactionId": transaction_id,
-                        "amount": amount,
-                        "type": transaction_type,
-                        "counterpartyId": counterparty_id,
-                    },
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    timeout=15.0,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPStatusError as e:
-            gap_type = "actimize_auth_failure" if e.response.status_code == 401 else "actimize_api_error"
-            severity = "critical" if gap_type == "actimize_auth_failure" else "high"
-            record = run.record(
-                check="actimize_transaction_monitoring",
-                manifest_id=manifest_id,
-                check_result="error",
-                input={"input_commitment": input_commitment},
-                details={"error_type": gap_type, "severity": severity},
-                visibility="opaque",
-            )
-            return PrimustAMLRecord(
-                commitment_hash=record.commitment_hash,
-                record_id=record.record_id,
-                proof_level=record.proof_level,
-                alert_generated=False,
-            )
-        except Exception:
-            record = run.record(
-                check="actimize_transaction_monitoring",
-                manifest_id=manifest_id,
-                check_result="error",
-                input={"input_commitment": input_commitment},
-                details={"error_type": "actimize_api_error", "severity": "high"},
-                visibility="opaque",
-            )
-            return PrimustAMLRecord(
-                commitment_hash=record.commitment_hash,
-                record_id=record.record_id,
-                proof_level=record.proof_level,
-                alert_generated=False,
-            )
-
-        result = _parse_alert_response(data)
-
-        # Compute output commitment — disposition and metadata, not raw scores
-        output_commitment = _commit({
-            "alert_id": result.alert_id,
-            "risk_score": result.risk_score,
-            "alert_disposition": "HIGH_RISK" if result.alert_generated else "LOW_RISK",
-            "rule_ids_fired_count": len(result.rule_codes_fired),
-        })
-
-        check_result = "fail" if result.alert_generated else "pass"
-
-        record = run.record(
-            check="actimize_transaction_monitoring",
-            manifest_id=manifest_id,
-            check_result=check_result,
-            input={"input_commitment": input_commitment, "output_commitment": output_commitment},
-            details={
-                "alert_generated": result.alert_generated,
-                "risk_score": result.risk_score,
-                # rule_codes_fired NOT included — reveals monitoring methodology
-            },
-            visibility="opaque",
-        )
-
-        return PrimustAMLRecord(
-            commitment_hash=record.commitment_hash,
-            record_id=record.record_id,
-            proof_level=record.proof_level,
-            alert_generated=result.alert_generated,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Surface 2: SAR Filing Workflow (Witnessed ceiling)
-# ---------------------------------------------------------------------------
-
-class ActimizeSARWorkflow:
-    """
-    Wraps SAR filing decision with Witnessed level proof.
-
-    Two RFC 3161 timestamps (check_open_tst + check_close_tst) prove minimum
-    review time elapsed. Reviewer Ed25519 signature proves identity.
-    Rationale committed locally — plaintext NEVER sent to Primust.
-
-    Framework tags: ['bsa_sar_31_cfr_1020', 'fincen_sar_reporting', 'finra_aml']
-    """
-
-    def __init__(
-        self,
-        base_url: str,
-        api_key: str,
-        primust_api_key: str,
-    ):
-        self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
-        self.primust_api_key = primust_api_key
-        self._manifest_ids: dict[str, str] = {}
-
-    def register_manifests(self) -> None:
-        p = primust.Pipeline(api_key=self.primust_api_key, workflow_id="manifest-registration")
-        result = p.register_check(MANIFEST_SAR_DECISION)
-        self._manifest_ids[MANIFEST_SAR_DECISION["name"]] = result.manifest_id
-
-    def record_sar_filing(
-        self,
-        run: Any,
-        case_id: str,
-        reviewer_id: str,
-        filing_decision: str,        # "file" | "no_file" | "defer"
-        rationale: str,
-        reviewer_signature: str,
-        case_content_hash: str,
-        min_review_minutes: int = 30,
-    ) -> SARDecisionResult:
-        """
-        Record a SAR filing determination with Witnessed level proof.
-
-        31 CFR §1020.320 requires BSA officers to document:
-          - What was reviewed (case_content_hash)
-          - The determination made (filing_decision)
-          - The rationale (committed locally, never sent)
-
-        INVARIANT: rationale text NEVER sent to Primust. Only rationale_commitment hash.
-        INVARIANT: reviewer_id is an opaque identifier — no PII.
-        """
-        manifest_id = self._manifest_ids.get("actimize_sar_decision")
-        if not manifest_id:
-            raise RuntimeError("Call register_manifests() first")
-
-        # Compute input commitment
-        input_commitment = _commit({
-            "case_id": case_id,
-            "reviewer_id": reviewer_id,
-            "filing_decision": filing_decision,
-        })
-
-        # Compute rationale commitment — rationale text hashed, never sent
-        rationale_commitment = _commit(rationale)
-
-        # Open Witnessed review session — captures check_open_tst (RFC 3161)
-        review = run.open_review(
-            check="actimize_sar_decision",
-            manifest_id=manifest_id,
-            reviewer_key_id=reviewer_id,
-            min_duration_seconds=min_review_minutes * 60,
-        )
-
-        check_open_tst = getattr(review, "open_tst", None)
-
-        check_result = "pass" if filing_decision == "file" else "fail"
-
-        # Record with full Witnessed payload — captures check_close_tst
-        record = run.record(
-            check_session=review,
-            input={"input_commitment": input_commitment},
-            check_result=check_result,
-            reviewer_signature=reviewer_signature,
-            display_content=case_content_hash,
-            rationale=rationale,
-            details={"case_id": case_id, "determination": filing_decision},
-            visibility="opaque",
-        )
-
-        check_close_tst = getattr(record, "recorded_at", None)
-
-        return SARDecisionResult(
-            case_id=case_id,
-            determination=filing_decision,
-            analyst_id=reviewer_id,
-            rationale_hash=rationale_commitment,
-            check_open_tst=check_open_tst,
-            check_close_tst=check_close_tst,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Surface 3: KYC/CDD Assessment (Attestation ceiling)
-# ---------------------------------------------------------------------------
-
-class ActimizeKYCAssessor:
-    """
-    Wraps NICE Actimize KYC/CDD assessment.
-
-    POST /kyc/api/v1/assessments
-
-    Proof ceiling: Attestation (ML-powered risk scoring).
-    Input commitment: customer_id, risk_tier, assessment_type, jurisdiction
-    CRITICAL: PII fields (name, DOB, SSN) excluded from input commitment.
-
-    Framework tags: ['bsa_cdd_rule', 'fatf_rec10']
-    """
-
-    def __init__(
-        self,
-        base_url: str,
-        api_key: str,
-        primust_api_key: str,
-    ):
-        self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
-        self.primust_api_key = primust_api_key
-        self._manifest_ids: dict[str, str] = {}
-
-    def register_manifests(self) -> None:
-        p = primust.Pipeline(api_key=self.primust_api_key, workflow_id="manifest-registration")
-        result = p.register_check(MANIFEST_KYC_REFRESH)
-        self._manifest_ids[MANIFEST_KYC_REFRESH["name"]] = result.manifest_id
-
-    def assess_customer(
-        self,
-        run: Any,
-        customer_id: str,
-        risk_tier: str,
-        assessment_type: str,
-        jurisdiction: str,
-    ) -> PrimustKYCRecord:
-        """
-        Assess customer risk profile and record governance proof.
-
-        Input commitment: customer_id, risk_tier, assessment_type, jurisdiction
-        Output commitment: assessment_id, risk_rating, decision, rules_applied_count
-        CRITICAL: PII fields NOT in commitment — only identifiers and metadata.
-        """
-        manifest_id = self._manifest_ids.get("actimize_kyc_refresh")
-        if not manifest_id:
-            raise RuntimeError("Call register_manifests() first")
-
-        input_commitment = _commit({
-            "customer_id": customer_id,
-            "risk_tier": risk_tier,
-            "assessment_type": assessment_type,
-            "jurisdiction": jurisdiction,
-        })
-
-        try:
-            with httpx.Client() as client:
-                resp = client.post(
-                    f"{self.base_url}/kyc/api/v1/assessments",
-                    json={
-                        "customerId": customer_id,
-                        "riskTier": risk_tier,
-                        "assessmentType": assessment_type,
-                        "jurisdiction": jurisdiction,
-                    },
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    timeout=15.0,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPStatusError as e:
-            gap_type = "actimize_auth_failure" if e.response.status_code == 401 else "actimize_api_error"
-            record = run.record(
-                check="actimize_kyc_assessment",
-                manifest_id=manifest_id,
-                check_result="error",
-                input={"input_commitment": input_commitment},
-                details={"error_type": gap_type},
-                visibility="opaque",
-            )
-            return PrimustKYCRecord(
-                commitment_hash=record.commitment_hash,
-                record_id=record.record_id,
-                proof_level=record.proof_level,
-                decision="error",
-            )
-        except Exception:
-            record = run.record(
-                check="actimize_kyc_assessment",
-                manifest_id=manifest_id,
-                check_result="error",
-                input={"input_commitment": input_commitment},
-                details={"error_type": "actimize_api_error"},
-                visibility="opaque",
-            )
-            return PrimustKYCRecord(
-                commitment_hash=record.commitment_hash,
-                record_id=record.record_id,
-                proof_level=record.proof_level,
-                decision="error",
-            )
-
-        assessment = KYCAssessmentResult(
-            assessment_id=data.get("assessmentId", ""),
-            risk_rating=data.get("riskRating", ""),
-            decision=data.get("decision", ""),
-            rules_applied_count=data.get("rulesAppliedCount", 0),
-            raw_response=data,
-        )
-
-        output_commitment = _commit({
-            "assessment_id": assessment.assessment_id,
-            "risk_rating": assessment.risk_rating,
-            "decision": assessment.decision,
-            "rules_applied_count": assessment.rules_applied_count,
-        })
-
-        record = run.record(
-            check="actimize_kyc_assessment",
-            manifest_id=manifest_id,
-            check_result="pass",
-            input={"input_commitment": input_commitment, "output_commitment": output_commitment},
-            details={
-                "risk_rating": assessment.risk_rating,
-                "decision": assessment.decision,
-            },
-            visibility="opaque",
-        )
-
-        return PrimustKYCRecord(
-            commitment_hash=record.commitment_hash,
-            record_id=record.record_id,
-            proof_level=record.proof_level,
-            decision=assessment.decision,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Legacy facade — backward compatibility with NiceActimizeConnector
-# ---------------------------------------------------------------------------
 
 class NiceActimizeConnector:
     """
-    Legacy facade wrapping the three surface classes.
-    Maintained for backward compatibility with existing code.
-    Prefer using ActimizeAlertEvaluator, ActimizeSARWorkflow,
-    ActimizeKYCAssessor directly.
+    Wraps NICE Actimize transaction monitoring and SAR decision workflow.
+
+    The AML paradox in concrete terms:
+        A FinCEN examiner reviewing BSA program compliance asks:
+        "Prove your transaction monitoring ran on account X during Q3."
+        Current answer: "Here are our logs." (requires trust + data disclosure)
+        With Primust: VPEC proves monitoring ran, input commitment proves
+        it was account X's transactions, threshold stages prove rules applied —
+        without disclosing the threshold values that would enable structuring.
+
+    SAR workflow:
+        When Actimize generates an alert, a BSA officer makes a determination.
+        That determination is a human decision that should be Witnessed level.
+        p.open_review() + p.record(reviewer_signature=..., rationale=...) gives
+        cryptographic proof the analyst reviewed specific content, spent minimum
+        time, and stated a rationale — satisfying 31 CFR §1020.320 documentation
+        requirements without disclosing the SAR contents.
     """
 
-    ACTONE_BASE = "https://actimize.bank.internal/ActOne/api/v2"
+    ACTONE_BASE = "https://actimize.bank.internal/ActOne/api/v2"  # typical on-prem URL pattern
 
     def __init__(
         self,
@@ -677,92 +248,65 @@ class NiceActimizeConnector:
     def new_pipeline(self, workflow_id: str = "aml-monitoring") -> primust.Pipeline:
         return primust.Pipeline(api_key=self.primust_api_key, workflow_id=workflow_id)
 
+    # ------------------------------------------------------------------
+    # Transaction monitoring
+    # ------------------------------------------------------------------
+
     def monitor_transaction(
         self,
-        pipeline: Any,
+        pipeline: primust.Pipeline,
         account_id: str,
         transaction_id: str,
         amount: float,
         transaction_type: str,
         counterparty_id: Optional[str] = None,
-        visibility: str = "opaque",
+        visibility: str = "opaque",  # transaction details are customer financial data
     ) -> PrimustAMLRecord:
-        """Legacy: wraps ActimizeAlertEvaluator via pipeline.record()."""
+        """
+        Submit transaction to Actimize monitoring and record VPEC.
+
+        Visibility "opaque" by default:
+          - Proves monitoring ran on this account/transaction
+          - Does NOT reveal amount, counterparty, or which rules fired
+          - Regulator can request NDA audit path for detailed evidence
+          - Structuring thresholds remain protected
+        """
         manifest_id = self._manifest_ids.get("actimize_transaction_monitoring")
         if not manifest_id:
             raise RuntimeError("Call register_manifests() first")
 
-        input_commitment = _commit({
-            "transaction_id": transaction_id,
-            "account_id": account_id,
-            "transaction_type": transaction_type,
-        })
+        # Call Actimize monitoring API
+        with httpx.Client() as client:
+            resp = client.post(
+                f"{self.actimize_url}/monitoring/transactions",
+                json={
+                    "accountId": account_id,
+                    "transactionId": transaction_id,
+                    "amount": amount,
+                    "type": transaction_type,
+                    "counterpartyId": counterparty_id,
+                },
+                headers={"Authorization": f"Bearer {self.actimize_api_key}"},
+                timeout=15.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
-        try:
-            with httpx.Client() as client:
-                resp = client.post(
-                    f"{self.actimize_url}/monitoring/transactions",
-                    json={
-                        "accountId": account_id,
-                        "transactionId": transaction_id,
-                        "amount": amount,
-                        "type": transaction_type,
-                        "counterpartyId": counterparty_id,
-                    },
-                    headers={"Authorization": f"Bearer {self.actimize_api_key}"},
-                    timeout=15.0,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPStatusError as e:
-            gap_type = "actimize_auth_failure" if e.response.status_code == 401 else "actimize_api_error"
-            record = pipeline.record(
-                check="actimize_transaction_monitoring",
-                manifest_id=manifest_id,
-                check_result="error",
-                input={"input_commitment": input_commitment},
-                details={"error_type": gap_type},
-                visibility="opaque",
-            )
-            return PrimustAMLRecord(
-                commitment_hash=record.commitment_hash,
-                record_id=record.record_id,
-                proof_level=record.proof_level,
-                alert_generated=False,
-            )
-        except Exception:
-            record = pipeline.record(
-                check="actimize_transaction_monitoring",
-                manifest_id=manifest_id,
-                check_result="error",
-                input={"input_commitment": input_commitment},
-                details={"error_type": "actimize_api_error"},
-                visibility="opaque",
-            )
-            return PrimustAMLRecord(
-                commitment_hash=record.commitment_hash,
-                record_id=record.record_id,
-                proof_level=record.proof_level,
-                alert_generated=False,
-            )
-
-        result = _parse_alert_response(data)
+        result = self._parse_alert_response(data)
         check_result = "fail" if result.alert_generated else "pass"
 
-        output_commitment = _commit({
-            "alert_id": result.alert_id,
-            "risk_score": result.risk_score,
-            "alert_disposition": "HIGH_RISK" if result.alert_generated else "LOW_RISK",
-        })
-
+        # Input commitment: account_id + transaction_id + amount
+        # Amount committed — proves the monitoring ran on the actual amount
+        # without revealing it to the verifier (opaque visibility)
         record = pipeline.record(
             check="actimize_transaction_monitoring",
             manifest_id=manifest_id,
+            input=f"{account_id}|{transaction_id}|{amount}|{transaction_type}",
             check_result=check_result,
-            input={"input_commitment": input_commitment, "output_commitment": output_commitment},
             details={
                 "alert_generated": result.alert_generated,
                 "risk_score": result.risk_score,
+                # rule_codes_fired NOT included — reveals monitoring methodology
             },
             visibility=visibility,
         )
@@ -774,74 +318,117 @@ class NiceActimizeConnector:
             alert_generated=result.alert_generated,
         )
 
+    # ------------------------------------------------------------------
+    # SAR determination — Witnessed level
+    # ------------------------------------------------------------------
+
     def record_sar_determination(
         self,
-        pipeline: Any,
+        pipeline: primust.Pipeline,
         case_id: str,
-        determination: str,
-        analyst_key_id: str,
-        case_content_hash: str,
-        rationale: str,
-        reviewer_signature: str,
-        min_review_minutes: int = 30,
+        determination: str,  # "FILE" | "NO_FILE"
+        analyst_key_id: str,  # registered reviewer key
+        case_content_hash: str,  # hash of what analyst reviewed
+        rationale: str,  # analyst's documented rationale
+        reviewer_signature: str,  # Ed25519 signature from analyst's key
+        min_review_minutes: int = 30,  # BSA programs typically require documented review time
     ) -> SARDecisionResult:
-        """Legacy: wraps ActimizeSARWorkflow via pipeline.open_review()."""
+        """
+        Record a SAR filing determination with Witnessed level proof.
+
+        31 CFR §1020.320 requires BSA officers to document:
+          - What was reviewed
+          - The determination made
+          - The rationale
+        This produces cryptographic proof of all three:
+          - display_hash proves analyst saw the actual case content
+          - rationale_hash commits the documented rationale
+          - VDF timestamps prove minimum review time elapsed
+          - Ed25519 signature proves this specific analyst signed it
+        All offline-verifiable. Primust never holds analyst credentials.
+        """
         manifest_id = self._manifest_ids.get("actimize_sar_decision")
         if not manifest_id:
             raise RuntimeError("Call register_manifests() first")
 
-        rationale_commitment = _commit(rationale)
-
+        # Open a Witnessed review session
         review = pipeline.open_review(
             check="actimize_sar_decision",
             manifest_id=manifest_id,
             reviewer_key_id=analyst_key_id,
             min_duration_seconds=min_review_minutes * 60,
         )
-
-        check_open_tst = getattr(review, "open_tst", None)
+        # review.open_tst = RFC 3161 timestamp (review start)
 
         check_result = "pass" if determination == "FILE" else "fail"
 
-        record = pipeline.record(
+        # Record with full Witnessed payload
+        pipeline.record(
             check_session=review,
-            input={"input_commitment": _commit({"case_id": case_id, "reviewer_id": analyst_key_id})},
+            input=f"case:{case_id}",
             check_result=check_result,
             reviewer_signature=reviewer_signature,
-            display_content=case_content_hash,
-            rationale=rationale,
+            display_content=case_content_hash,  # committed locally — proves what analyst saw
+            rationale=rationale,  # committed locally → rationale_hash
             details={"case_id": case_id, "determination": determination},
-            visibility="opaque",
+            visibility="opaque",  # SAR contents are legally protected
         )
-
-        check_close_tst = getattr(record, "recorded_at", None)
 
         return SARDecisionResult(
             case_id=case_id,
             determination=determination,
             analyst_id=analyst_key_id,
-            rationale_hash=rationale_commitment,
-            check_open_tst=check_open_tst,
-            check_close_tst=check_close_tst,
+            rationale_hash=None,  # populated in VPEC by SDK
         )
 
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
     def _parse_alert_response(self, data: dict) -> ActimizeAlertResult:
-        return _parse_alert_response(data)
+        return ActimizeAlertResult(
+            alert_id=data.get("alertId", ""),
+            alert_type=data.get("alertType", ""),
+            risk_score=float(data.get("riskScore", 0.0)),
+            alert_generated=data.get("alertGenerated", False),
+            rule_codes_fired=data.get("ruleCodesFired", []),
+            raw_response=data,
+        )
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
+ACTIMIZE_JAVA_UPGRADE_NOTE = """
+When Java SDK (P10-D) ships, deterministic stages hit Mathematical ceiling:
 
-def _parse_alert_response(data: dict) -> ActimizeAlertResult:
-    return ActimizeAlertResult(
-        alert_id=data.get("alertId", ""),
-        alert_type=data.get("alertType", ""),
-        risk_score=float(data.get("riskScore", 0.0)),
-        alert_generated=data.get("alertGenerated", False),
-        rule_codes_fired=data.get("ruleCodesFired", []),
-        raw_response=data,
-    )
+  // In-process — direct Actimize Java API
+  import com.actimize.sam.RuleEngine;
+  import com.primust.Primust;
+
+  RuleEngine engine = RuleEngine.getInstance(config);
+  TransactionData tx = TransactionData.from(transactionPayload);
+  engine.evaluate(tx);
+
+  // Velocity rule: count(tx in 24h window) >= threshold
+  // This is arithmetic — expressible as Noir circuit
+  // manifest declares: method=threshold_comparison, stage_type=deterministic_rule
+  // Proof level: MATHEMATICAL
+
+  p.record(
+    RecordInput.builder()
+      .check("actimize_velocity_rule")
+      .manifestId(manifestId)
+      .input(tx.toBytes())
+      .checkResult(tx.getVelocityResult())
+      .build()
+  );
+
+  // The structuring detection (multiple sub-threshold txs summing to reportable)
+  // is also arithmetic — Mathematical proof that the sum was computed correctly
+  // without revealing individual transaction amounts.
+
+  // ML behavioral model remains Attestation — proprietary Actimize model.
+  // Per-stage breakdown in VPEC: velocity=mathematical, ml=attestation.
+  // Overall VPEC: attestation (weakest-link), but examiner sees the breakdown.
+"""
 
 
 # ---------------------------------------------------------------------------

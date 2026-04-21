@@ -1,17 +1,3 @@
-# Copyright 2026 Primust, Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """
 Primust Connector: FICO Falcon Fraud Detection
 ===============================================
@@ -47,40 +33,10 @@ On-premise deployments also expose:
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from typing import Any, Optional
 
 import httpx
-
-from primust_artifact_core.commitment import commit as _artifact_commit
-
-try:
-    import primust
-    PRIMUST_AVAILABLE = True
-except ImportError:
-    PRIMUST_AVAILABLE = False
-
-
-# ---------------------------------------------------------------------------
-# Commitment helper — raw data never leaves this function
-# ---------------------------------------------------------------------------
-
-def _commit(data: Any) -> str:
-    """Commit via artifact-core commitment path (SHA-256 default)."""
-    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
-    hash_str, _ = _artifact_commit(canonical.encode(), "sha256")
-    return hash_str
-
-
-def _score_to_band(fraud_score: int) -> str:
-    """Map numeric fraud score to a band. Raw score never leaves the connector."""
-    if fraud_score >= 700:
-        return "high"
-    elif fraud_score >= 400:
-        return "medium"
-    else:
-        return "low"
+import primust
 
 
 # ---------------------------------------------------------------------------
@@ -100,19 +56,17 @@ MANIFEST_FRAUD_SCORE = {
             "stage": 1,
             "name": "neural_net_scoring",
             "type": "ml_model",
-            "proof_level": "attestation",       # Falcon NN is proprietary — permanent ceiling
+            "proof_level": "attestation",  # Falcon NN is proprietary — permanent ceiling
             "purpose": "FICO Falcon neural network produces fraud probability score 0-999",
-            "regulatory_references": ["occ_fraud_examination", "visa_core_rules", "mc_security_rules"],
         },
         {
             "stage": 2,
             "name": "decline_threshold_check",
             "type": "deterministic_rule",
-            "proof_level": "attestation",       # → mathematical post-Java SDK in-process
+            "proof_level": "attestation",  # → mathematical post-Java SDK in-process
             "method": "threshold_comparison",
             "formula": "fraud_score >= decline_threshold",
             "purpose": "Score compared against configured decline threshold",
-            "regulatory_references": ["occ_fraud_examination", "visa_core_rules"],
             # NOTE: decline_threshold NOT in manifest (opaque config)
             # Revealing the threshold enables score gaming
             # The MATHEMATICAL proof proves the comparison ran correctly
@@ -126,11 +80,10 @@ MANIFEST_FRAUD_SCORE = {
             "method": "threshold_comparison",
             "formula": "fraud_score >= review_threshold",
             "purpose": "Score compared against manual review threshold",
-            "regulatory_references": ["occ_fraud_examination", "pci_dss_req12"],
         },
     ],
     "aggregation": {"method": "worst_case"},
-    "freshness_threshold_hours": 720,   # Falcon model updates quarterly typically
+    "freshness_threshold_hours": 720,  # Falcon model updates quarterly typically
     "publisher": "your-org-id",
 }
 
@@ -148,7 +101,6 @@ MANIFEST_BATCH_AUTHORIZATION = {
             "type": "ml_model",
             "proof_level": "attestation",
             "purpose": "Account-level risk score from historical behavior",
-            "regulatory_references": ["occ_fraud_examination", "visa_core_rules"],
         },
         {
             "stage": 2,
@@ -156,38 +108,14 @@ MANIFEST_BATCH_AUTHORIZATION = {
             "type": "ml_model",
             "proof_level": "attestation",
             "purpose": "Transaction-level anomaly score",
-            "regulatory_references": ["occ_fraud_examination", "mc_security_rules"],
         },
         {
             "stage": 3,
             "name": "composite_threshold",
             "type": "deterministic_rule",
-            "proof_level": "attestation",       # → mathematical in-process
+            "proof_level": "attestation",  # → mathematical in-process
             "method": "threshold_comparison",
             "purpose": "Composite score vs authorization threshold",
-            "regulatory_references": ["occ_fraud_examination", "visa_core_rules", "pci_dss_req12"],
-        },
-    ],
-    "aggregation": {"method": "worst_case"},
-    "freshness_threshold_hours": 720,
-    "publisher": "your-org-id",
-}
-
-MANIFEST_RULES_DECISION = {
-    "name": "fico_falcon_rules_decision",
-    "description": (
-        "Deterministic rules component of FICO Falcon. Velocity checks, "
-        "geographic anomaly rules, and merchant category restrictions. "
-        "Rules are configurable per-issuer."
-    ),
-    "stages": [
-        {
-            "stage": 1,
-            "name": "rules_evaluation",
-            "type": "deterministic_rule",
-            "proof_level": "attestation",
-            "purpose": "Falcon rules engine: velocity, geo-anomaly, MCC restrictions",
-            "regulatory_references": ["occ_fraud_examination", "visa_core_rules", "pci_dss_req12"],
         },
     ],
     "aggregation": {"method": "worst_case"},
@@ -200,11 +128,12 @@ MANIFEST_RULES_DECISION = {
 # Result dataclasses
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class FalconScoreResult:
     transaction_id: str
-    fraud_score: int          # 0–999, higher = more suspicious
-    decision: str             # "APPROVE" | "DECLINE" | "REVIEW"
+    fraud_score: int  # 0–999, higher = more suspicious
+    decision: str  # "APPROVE" | "DECLINE" | "REVIEW"
     model_version: str
     raw_response: dict
 
@@ -213,9 +142,8 @@ class FalconScoreResult:
 class PrimustFraudRecord:
     commitment_hash: str
     record_id: str
-    proof_level: str          # always "attestation" overall
+    proof_level: str  # always "attestation" overall
     decision: str
-    gap_code: Optional[str] = None
     mathematical_stage_note: str = (
         "Stage 2 (threshold comparison) is Mathematical — "
         "proves threshold check ran without revealing threshold value"
@@ -225,6 +153,7 @@ class PrimustFraudRecord:
 # ---------------------------------------------------------------------------
 # Connector
 # ---------------------------------------------------------------------------
+
 
 class FicoFalconConnector:
     """
@@ -253,7 +182,7 @@ class FicoFalconConnector:
         falcon_server_url: str,
         falcon_api_key: str,
         primust_api_key: str,
-        decline_threshold: int = 750,   # typical range: 650–850
+        decline_threshold: int = 750,  # typical range: 650–850
         review_threshold: int = 500,
     ):
         self.falcon_url = falcon_server_url.rstrip("/")
@@ -264,27 +193,24 @@ class FicoFalconConnector:
         self._manifest_ids: dict[str, str] = {}
 
     def register_manifests(self) -> None:
-        if not PRIMUST_AVAILABLE:
-            raise RuntimeError("primust package not installed: pip install primust")
         p = primust.Pipeline(api_key=self.primust_api_key, workflow_id="manifest-registration")
-        for manifest in [MANIFEST_FRAUD_SCORE, MANIFEST_BATCH_AUTHORIZATION, MANIFEST_RULES_DECISION]:
+        for manifest in [MANIFEST_FRAUD_SCORE, MANIFEST_BATCH_AUTHORIZATION]:
             result = p.register_check(manifest)
             self._manifest_ids[manifest["name"]] = result.manifest_id
 
     def new_pipeline(self, workflow_id: str = "fraud-scoring") -> primust.Pipeline:
-        if not PRIMUST_AVAILABLE:
-            raise RuntimeError("primust package not installed: pip install primust")
         return primust.Pipeline(api_key=self.primust_api_key, workflow_id=workflow_id)
 
     def score_transaction(
         self,
-        pipeline: Any,
+        pipeline: primust.Pipeline,
         transaction_id: str,
-        card_number_hash: str,    # MUST be hashed before passing in — PAN is PCI
+        card_number_hash: str,  # MUST be hashed before passing in — PAN is PCI
         amount: float,
         merchant_id: str,
         merchant_category_code: str,
         country_code: str,
+        visibility: str = "opaque",
     ) -> PrimustFraudRecord:
         """
         Score a transaction and record VPEC proof.
@@ -296,78 +222,27 @@ class FicoFalconConnector:
         The threshold comparison (decline/review) is the Mathematical story:
         prove the score was compared against configured thresholds without
         revealing the thresholds to the verifier.
-
-        CRITICAL: card_number_hash and account numbers are NEVER included in the
-        input commitment. Only safe fields (merchant, MCC, country, transaction_id)
-        are committed. This prevents PCI-sensitive data from leaking via commitment.
-
-        Gap handling: On Falcon API errors, records a gap with check_result="error"
-        and returns gracefully (fail-open). The gap is recorded in the VPEC.
         """
         manifest_id = self._manifest_ids.get("fico_falcon_fraud_score")
         if not manifest_id:
             raise RuntimeError("Call register_manifests() first")
 
-        # Input commitment: safe fields only — NO card number, NO account number
-        input_commitment = _commit({
-            "transaction_id": transaction_id,
-            "merchant_id": merchant_id,
-            "merchant_category_code": merchant_category_code,
-            "country_code": country_code,
-            "amount": amount,
-        })
-
-        try:
-            with httpx.Client() as client:
-                resp = client.post(
-                    f"{self.falcon_url}/falcon/v1/score",
-                    json={
-                        "transactionId": transaction_id,
-                        "cardToken": card_number_hash,
-                        "amount": amount,
-                        "merchantId": merchant_id,
-                        "mcc": merchant_category_code,
-                        "countryCode": country_code,
-                    },
-                    headers={"Authorization": f"Bearer {self.falcon_api_key}"},
-                    timeout=5.0,   # fraud scoring must be fast — real-time auth path
-                )
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPStatusError as e:
-            gap_code = "falcon_auth_failure" if e.response.status_code == 401 else "falcon_api_error"
-            severity = "critical" if gap_code == "falcon_auth_failure" else "high"
-            record = pipeline.record(
-                check="fico_falcon_fraud_score",
-                manifest_id=manifest_id,
-                check_result="error",
-                input={"input_commitment": input_commitment},
-                details={"error_type": gap_code, "severity": severity},
-                visibility="opaque",
+        with httpx.Client() as client:
+            resp = client.post(
+                f"{self.falcon_url}/falcon/v1/score",
+                json={
+                    "transactionId": transaction_id,
+                    "cardToken": card_number_hash,
+                    "amount": amount,
+                    "merchantId": merchant_id,
+                    "mcc": merchant_category_code,
+                    "countryCode": country_code,
+                },
+                headers={"Authorization": f"Bearer {self.falcon_api_key}"},
+                timeout=5.0,  # fraud scoring must be fast — real-time auth path
             )
-            return PrimustFraudRecord(
-                commitment_hash=record.commitment_hash,
-                record_id=record.record_id,
-                proof_level=record.proof_level,
-                decision="ERROR",
-                gap_code=gap_code,
-            )
-        except Exception:
-            record = pipeline.record(
-                check="fico_falcon_fraud_score",
-                manifest_id=manifest_id,
-                check_result="error",
-                input={"input_commitment": input_commitment},
-                details={"error_type": "falcon_api_error", "severity": "high"},
-                visibility="opaque",
-            )
-            return PrimustFraudRecord(
-                commitment_hash=record.commitment_hash,
-                record_id=record.record_id,
-                proof_level=record.proof_level,
-                decision="ERROR",
-                gap_code="falcon_api_error",
-            )
+            resp.raise_for_status()
+            data = resp.json()
 
         result = self._parse_score_response(data, transaction_id)
 
@@ -381,27 +256,20 @@ class FicoFalconConnector:
 
         check_result = "fail" if decision == "DECLINE" else "pass"
 
-        # Output commitment: model_score_band (NOT raw fraud score)
-        output_commitment = _commit({
-            "model_score_band": _score_to_band(result.fraud_score),
-            "decision": decision,
-            "model_version": result.model_version,
-        })
-
+        # Input commitment: card token + amount + merchant + MCC
+        # Threshold values NOT in details — would reveal fraud strategy
         record = pipeline.record(
             check="fico_falcon_fraud_score",
             manifest_id=manifest_id,
-            input={"input_commitment": input_commitment},
+            input=f"{card_number_hash}|{amount}|{merchant_id}|{merchant_category_code}|{country_code}",
             check_result=check_result,
             details={
                 "transaction_id": transaction_id,
                 "decision": decision,
                 "model_version": result.model_version,
-                "model_score_band": _score_to_band(result.fraud_score),
-                "output_commitment": output_commitment,
                 # fraud_score NOT included — reveals position relative to threshold
             },
-            visibility="opaque",
+            visibility=visibility,
         )
 
         return PrimustFraudRecord(
@@ -409,67 +277,6 @@ class FicoFalconConnector:
             record_id=record.record_id,
             proof_level=record.proof_level,
             decision=decision,
-        )
-
-    def record_rules_decision(
-        self,
-        pipeline: Any,
-        transaction_id: str,
-        rules_triggered: list[str],
-        rules_decision: str,
-        merchant_id: str,
-        merchant_category_code: str,
-        country_code: str,
-    ) -> PrimustFraudRecord:
-        """
-        Record the deterministic rules component of a Falcon evaluation.
-
-        Rules include velocity checks, geographic anomaly detection, and
-        merchant category restrictions. These are configurable per-issuer
-        and deterministic — they could reach Mathematical proof level
-        with in-process instrumentation.
-
-        Args:
-            pipeline: Primust pipeline instance.
-            transaction_id: Transaction identifier.
-            rules_triggered: List of rule IDs that fired (e.g. ["velocity_24h", "geo_anomaly"]).
-            rules_decision: "APPROVE" | "DECLINE" | "REVIEW"
-            merchant_id: Merchant identifier.
-            merchant_category_code: MCC code.
-            country_code: ISO country code.
-        """
-        manifest_id = self._manifest_ids.get("fico_falcon_rules_decision")
-        if not manifest_id:
-            raise RuntimeError("Call register_manifests() first")
-
-        input_commitment = _commit({
-            "transaction_id": transaction_id,
-            "merchant_id": merchant_id,
-            "merchant_category_code": merchant_category_code,
-            "country_code": country_code,
-        })
-
-        check_result = "fail" if rules_decision == "DECLINE" else "pass"
-
-        record = pipeline.record(
-            check="fico_falcon_rules_decision",
-            manifest_id=manifest_id,
-            input={"input_commitment": input_commitment},
-            check_result=check_result,
-            details={
-                "transaction_id": transaction_id,
-                "rules_decision": rules_decision,
-                "rules_triggered_count": len(rules_triggered),
-                # Individual rule IDs not disclosed — reveals fraud strategy
-            },
-            visibility="opaque",
-        )
-
-        return PrimustFraudRecord(
-            commitment_hash=record.commitment_hash,
-            record_id=record.record_id,
-            proof_level=record.proof_level,
-            decision=rules_decision,
         )
 
     def _parse_score_response(self, data: dict, txn_id: str) -> FalconScoreResult:

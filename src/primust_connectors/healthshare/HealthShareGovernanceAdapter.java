@@ -1,19 +1,3 @@
-/*
- * Copyright 2026 Primust, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 """
 Primust Connector: InterSystems HealthShare / IRIS for Health
 =============================================================
@@ -59,14 +43,8 @@ import com.primust.RecordInput;
 import com.primust.CheckResult;
 import com.primust.VPEC;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.util.Map;
-import java.util.TreeMap;
-import java.util.logging.Logger;
-import java.util.stream.Collectors;
 
 /**
  * Primust governance adapter for InterSystems HealthShare / IRIS for Health.
@@ -87,8 +65,6 @@ import java.util.stream.Collectors;
  *   </dependency>
  */
 public class HealthShareGovernanceAdapter {
-
-    private static final Logger logger = Logger.getLogger(HealthShareGovernanceAdapter.class.getName());
 
     private final IRIS iris;
     private final Pipeline pipeline;
@@ -149,71 +125,6 @@ public class HealthShareGovernanceAdapter {
     }
 
     // ------------------------------------------------------------------
-    // JSON commitment helper
-    // ------------------------------------------------------------------
-
-    /**
-     * Build a canonical JSON commitment hash from the given fields.
-     *
-     * Sorts keys alphabetically, builds canonical JSON (no whitespace),
-     * and returns the SHA-256 hash. This is a commitment — raw field
-     * values never appear in the proof artifact.
-     *
-     * IMPORTANT: FHIR resource IDs (patient_id, etc.) must be pre-hashed
-     * before being passed into this method. PHI values must NEVER appear
-     * in commitment fields.
-     *
-     * @param fields Map of key-value pairs to commit to
-     * @return SHA-256 hash bytes of the canonical JSON
-     */
-    private byte[] buildJsonCommitment(Map<String, String> fields) {
-        // Sort keys for canonical ordering
-        TreeMap<String, String> sorted = new TreeMap<>(fields);
-
-        // Build canonical JSON — no whitespace, sorted keys
-        String canonicalJson = sorted.entrySet().stream()
-            .map(e -> "\"" + escapeJson(e.getKey()) + "\":\"" + escapeJson(e.getValue()) + "\"")
-            .collect(Collectors.joining(",", "{", "}"));
-
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return digest.digest(canonicalJson.getBytes(StandardCharsets.UTF_8));
-        } catch (NoSuchAlgorithmException e) {
-            // SHA-256 is guaranteed by the JVM spec — this cannot happen
-            throw new RuntimeException("SHA-256 not available", e);
-        }
-    }
-
-    /**
-     * Hash a FHIR resource ID so raw PHI never enters commitment fields.
-     */
-    private String hashResourceId(String resourceId) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(resourceId.getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder();
-            for (byte b : hash) {
-                hex.append(String.format("%02x", b));
-            }
-            return hex.toString();
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("SHA-256 not available", e);
-        }
-    }
-
-    /**
-     * Minimal JSON string escaping for canonical JSON construction.
-     */
-    private String escapeJson(String value) {
-        return value
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-            .replace("\t", "\\t");
-    }
-
-    // ------------------------------------------------------------------
     // CDS Hooks — Clinical Decision Support
     // CDS Hooks are FHIR-based — called at order entry, prescription, etc.
     // ------------------------------------------------------------------
@@ -224,7 +135,7 @@ public class HealthShareGovernanceAdapter {
      * HIPAA paradox resolved:
      *   Joint Commission asks: "Prove your CDS fired for medication orders."
      *   VPEC proves CDS ran on this patient/encounter without disclosing PHI.
-     *   input commitment = SHA-256(canonical JSON of hashed patient_id + encounter_id + hook_type)
+     *   input commitment = patient_id + encounter_id + hook_type
      *   Patient's medication list, diagnoses, allergies never transit.
      *
      * @param patientId  FHIR Patient resource ID
@@ -253,58 +164,29 @@ public class HealthShareGovernanceAdapter {
             );
             cdsRuleVersion = cdsService != null ? cdsService.getString("Version") : "unknown";
         } catch (Exception e) {
-            // Gap: IRIS connection failure retrieving CDS rule version
-            logger.warning("healthshare_iris_error: Failed to retrieve CDS rule version: " + e.getMessage());
             cdsRuleVersion = "unavailable";
         }
 
-        // Canonical JSON commitment — FHIR resource_id hashed before inclusion
-        byte[] commitment = buildJsonCommitment(Map.of(
-            "encounter_id", hashResourceId(encounterId),
-            "hook_id", hookId,
-            "patient_id", hashResourceId(patientId)
-        ));
-
-        try {
-            pipeline.record(
-                RecordInput.builder()
-                    .check("healthshare_cds_hooks")
-                    .manifestId(manifestIdCdsHooks)
-                    // Input: canonical JSON commitment of hashed identifiers
-                    // Patient clinical data NOT included — only hashed IDs
-                    .input(commitment)
-                    .checkResult(result)
-                    .details(Map.of(
-                        "hook_id", hookId,
-                        "hook_result", hookResult,
-                        "critical_alert", criticalAlertGenerated,
-                        "cds_rule_version", cdsRuleVersion
-                    ))
-                    .visibility("opaque")  // encounter context is PHI
-                    .build()
-            );
-        } catch (Exception e) {
-            // Gap: pipeline record failure — fail-open, log and continue
-            logger.severe("healthshare_iris_error [High]: Failed to record CDS hook execution: " + e.getMessage());
-            try {
-                pipeline.record(
-                    RecordInput.builder()
-                        .check("healthshare_cds_hooks")
-                        .manifestId(manifestIdCdsHooks)
-                        .input(commitment)
-                        .checkResult(CheckResult.ERROR)
-                        .details(Map.of(
-                            "gap_code", "healthshare_iris_error",
-                            "gap_severity", "High",
-                            "error", e.getMessage() != null ? e.getMessage() : "unknown"
-                        ))
-                        .visibility("opaque")
-                        .build()
-                );
-            } catch (Exception nested) {
-                logger.severe("healthshare_iris_error [High]: Gap record also failed: " + nested.getMessage());
-            }
-        }
+        pipeline.record(
+            RecordInput.builder()
+                .check("healthshare_cds_hooks")
+                .manifestId(manifestIdCdsHooks)
+                // Input: patient + encounter identity — committed locally
+                // Patient clinical data NOT included — only the IDs
+                .input(String.format(
+                    "patient:%s|encounter:%s|hook:%s",
+                    patientId, encounterId, hookId
+                ).getBytes())
+                .checkResult(result)
+                .details(Map.of(
+                    "hook_id", hookId,
+                    "hook_result", hookResult,
+                    "critical_alert", criticalAlertGenerated,
+                    "cds_rule_version", cdsRuleVersion
+                ))
+                .visibility("opaque")  // encounter context is PHI
+                .build()
+        );
     }
 
     // ------------------------------------------------------------------
@@ -344,110 +226,31 @@ public class HealthShareGovernanceAdapter {
             if (consentResult != null) {
                 consentId = consentResult.getString("ConsentId");
             }
-        } catch (javax.security.auth.login.LoginException e) {
-            // Gap: authentication failure — critical severity, fail-open
-            logger.severe("healthshare_auth_failure [Critical]: IRIS authentication failed during consent lookup: " + e.getMessage());
-            try {
-                pipeline.record(
-                    RecordInput.builder()
-                        .check("healthshare_consent_verification")
-                        .manifestId(manifestIdConsentCheck)
-                        .input(buildJsonCommitment(Map.of(
-                            "data_category", dataCategory,
-                            "patient_id", hashResourceId(patientId),
-                            "requesting_org_id", requestingOrgId
-                        )))
-                        .checkResult(CheckResult.ERROR)
-                        .details(Map.of(
-                            "gap_code", "healthshare_auth_failure",
-                            "gap_severity", "Critical",
-                            "error", e.getMessage() != null ? e.getMessage() : "unknown"
-                        ))
-                        .visibility("opaque")
-                        .build()
-                );
-            } catch (Exception nested) {
-                logger.severe("healthshare_auth_failure [Critical]: Gap record also failed: " + nested.getMessage());
-            }
-            return;
-        } catch (Exception e) {
-            // Gap: IRIS connection failure — high severity, fail-open
-            logger.severe("healthshare_iris_error [High]: Failed to lookup consent: " + e.getMessage());
-            try {
-                pipeline.record(
-                    RecordInput.builder()
-                        .check("healthshare_consent_verification")
-                        .manifestId(manifestIdConsentCheck)
-                        .input(buildJsonCommitment(Map.of(
-                            "data_category", dataCategory,
-                            "patient_id", hashResourceId(patientId),
-                            "requesting_org_id", requestingOrgId
-                        )))
-                        .checkResult(CheckResult.ERROR)
-                        .details(Map.of(
-                            "gap_code", "healthshare_iris_error",
-                            "gap_severity", "High",
-                            "error", e.getMessage() != null ? e.getMessage() : "unknown"
-                        ))
-                        .visibility("opaque")
-                        .build()
-                );
-            } catch (Exception nested) {
-                logger.severe("healthshare_iris_error [High]: Gap record also failed: " + nested.getMessage());
-            }
-            return;
-        }
+        } catch (Exception ignored) {}
 
         CheckResult result = consentVerified ? CheckResult.PASS : CheckResult.FAIL;
 
-        // Canonical JSON commitment — FHIR resource_id hashed before inclusion
-        byte[] commitment = buildJsonCommitment(Map.of(
-            "data_category", dataCategory,
-            "patient_id", hashResourceId(patientId),
-            "requesting_org_id", requestingOrgId
-        ));
-
-        try {
-            pipeline.record(
-                RecordInput.builder()
-                    .check("healthshare_consent_verification")
-                    .manifestId(manifestIdConsentCheck)
-                    // Consent verification is a set_membership check:
-                    // patient ∈ active_consents_for(org, data_category)
-                    // This is deterministic — Mathematical ceiling in-process
-                    .input(commitment)
-                    .checkResult(result)
-                    .details(Map.of(
-                        "requesting_org", requestingOrgId,
-                        "data_category", dataCategory,
-                        "consent_verified", consentVerified,
-                        "consent_id", consentId
-                    ))
-                    .visibility("opaque")  // system invariant — consent context is PHI
-                    .build()
-            );
-        } catch (Exception e) {
-            // Gap: pipeline record failure — fail-open
-            logger.severe("healthshare_iris_error [High]: Failed to record consent verification: " + e.getMessage());
-            try {
-                pipeline.record(
-                    RecordInput.builder()
-                        .check("healthshare_consent_verification")
-                        .manifestId(manifestIdConsentCheck)
-                        .input(commitment)
-                        .checkResult(CheckResult.ERROR)
-                        .details(Map.of(
-                            "gap_code", "healthshare_iris_error",
-                            "gap_severity", "High",
-                            "error", e.getMessage() != null ? e.getMessage() : "unknown"
-                        ))
-                        .visibility("opaque")
-                        .build()
-                );
-            } catch (Exception nested) {
-                logger.severe("healthshare_iris_error [High]: Gap record also failed: " + nested.getMessage());
-            }
-        }
+        pipeline.record(
+            RecordInput.builder()
+                .check("healthshare_consent_verification")
+                .manifestId(manifestIdConsentCheck)
+                // Consent verification is a set_membership check:
+                // patient ∈ active_consents_for(org, data_category)
+                // This is deterministic — Mathematical ceiling in-process
+                .input(String.format(
+                    "patient:%s|org:%s|category:%s",
+                    patientId, requestingOrgId, dataCategory
+                ).getBytes())
+                .checkResult(result)
+                .details(Map.of(
+                    "requesting_org", requestingOrgId,
+                    "data_category", dataCategory,
+                    "consent_verified", consentVerified,
+                    "consent_id", consentId
+                ))
+                .visibility("selective")  // org + category visible, patient ID opaque
+                .build()
+        );
     }
 
     // ------------------------------------------------------------------
@@ -474,50 +277,23 @@ public class HealthShareGovernanceAdapter {
     ) {
         CheckResult result = meetsCriteria ? CheckResult.PASS : CheckResult.FAIL;
 
-        // Canonical JSON commitment — FHIR resource_id hashed before inclusion
-        byte[] commitment = buildJsonCommitment(Map.of(
-            "criteria_version", criteriaVersion,
-            "pathway_id", pathwayId,
-            "patient_id", hashResourceId(patientId)
-        ));
-
-        try {
-            pipeline.record(
-                RecordInput.builder()
-                    .check("healthshare_care_pathway")
-                    .manifestId(manifestIdCarePathway)
-                    .input(commitment)
-                    .checkResult(result)
-                    .details(Map.of(
-                        "pathway_id", pathwayId,
-                        "criteria_version", criteriaVersion,
-                        "meets_criteria", meetsCriteria
-                    ))
-                    .visibility("opaque")
-                    .build()
-            );
-        } catch (Exception e) {
-            // Gap: pipeline record failure — fail-open
-            logger.severe("healthshare_iris_error [High]: Failed to record care pathway evaluation: " + e.getMessage());
-            try {
-                pipeline.record(
-                    RecordInput.builder()
-                        .check("healthshare_care_pathway")
-                        .manifestId(manifestIdCarePathway)
-                        .input(commitment)
-                        .checkResult(CheckResult.ERROR)
-                        .details(Map.of(
-                            "gap_code", "healthshare_iris_error",
-                            "gap_severity", "High",
-                            "error", e.getMessage() != null ? e.getMessage() : "unknown"
-                        ))
-                        .visibility("opaque")
-                        .build()
-                );
-            } catch (Exception nested) {
-                logger.severe("healthshare_iris_error [High]: Gap record also failed: " + nested.getMessage());
-            }
-        }
+        pipeline.record(
+            RecordInput.builder()
+                .check("healthshare_care_pathway")
+                .manifestId(manifestIdCarePathway)
+                .input(String.format(
+                    "patient:%s|pathway:%s|criteria_version:%s",
+                    patientId, pathwayId, criteriaVersion
+                ).getBytes())
+                .checkResult(result)
+                .details(Map.of(
+                    "pathway_id", pathwayId,
+                    "criteria_version", criteriaVersion,
+                    "meets_criteria", meetsCriteria
+                ))
+                .visibility("opaque")
+                .build()
+        );
     }
 
     /**
@@ -537,7 +313,6 @@ public class HealthShareGovernanceAdapter {
  *   "name": "healthshare_cds_hooks",
  *   "description": "InterSystems HealthShare CDS Hooks execution. FHIR-based
  *                   clinical decision support at order entry and prescription points.",
- *   "regulatory_references": ["hipaa_45cfr164_312", "cms_conditions_participation_482_24", "joint_commission_npsg"],
  *   "stages": [
  *     { "stage": 1, "name": "patient_context_retrieval", "type": "deterministic_rule",
  *       "proof_level": "mathematical", "method": "set_membership",
@@ -555,7 +330,6 @@ public class HealthShareGovernanceAdapter {
  * CONSENT_CHECK_MANIFEST:
  * {
  *   "name": "healthshare_consent_verification",
- *   "regulatory_references": ["hipaa_45cfr164_312", "tefca_data_sharing", "state_consent_laws"],
  *   "stages": [
  *     { "stage": 1, "name": "consent_lookup", "type": "deterministic_rule",
  *       "proof_level": "mathematical", "method": "set_membership",
@@ -566,18 +340,6 @@ public class HealthShareGovernanceAdapter {
  *       "purpose": "Consent has not expired" }
  *   ],
  *   "aggregation": { "method": "all_must_pass" }
- * }
- *
- * CARE_PATHWAY_MANIFEST:
- * {
- *   "name": "healthshare_care_pathway",
- *   "regulatory_references": ["cms_conditions_participation_482_24", "joint_commission_npsg"],
- *   "stages": [
- *     { "stage": 1, "name": "criteria_evaluation", "type": "deterministic_rule",
- *       "proof_level": "mathematical", "method": "set_membership",
- *       "purpose": "Patient assessed against care pathway enrollment criteria" }
- *   ],
- *   "aggregation": { "method": "worst_case" }
  * }
  */
 

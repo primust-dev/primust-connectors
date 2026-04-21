@@ -1,17 +1,3 @@
-# Copyright 2026 Primust, Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """
 Primust Connectors: FICO Blaze Advisor + IBM Operational Decision Manager
 =========================================================================
@@ -35,31 +21,10 @@ IBM ODM REST API: Decision Service REST API (ODM 8.x+)
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from typing import Any, Optional
 
 import httpx
-
-from primust_artifact_core.commitment import commit as _artifact_commit
-
-try:
-    import primust
-    from primust import Pipeline, Run
-    PRIMUST_AVAILABLE = True
-except ImportError:
-    PRIMUST_AVAILABLE = False
-
-
-# ---------------------------------------------------------------------------
-# Commitment — raw data never leaves customer environment
-# ---------------------------------------------------------------------------
-
-def _commit(data: Any) -> str:
-    """Commit via artifact-core. Only the hash transits to Primust."""
-    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
-    hash_str, _ = _artifact_commit(canonical.encode(), "sha256")
-    return hash_str
+import primust
 
 
 # ===========================================================================
@@ -78,20 +43,18 @@ BLAZE_MANIFEST_CREDIT_DECISIONING = {
             "stage": 1,
             "name": "credit_score_band",
             "type": "deterministic_rule",
-            "proof_level": "attestation",    # → mathematical post-Java SDK
+            "proof_level": "attestation",  # → mathematical post-Java SDK
             "method": "threshold_comparison",
             "purpose": "Credit score >= minimum threshold for product tier",
-            "regulatory_references": ["occ_sr_11_7", "cfpb_ecoa"],
         },
         {
             "stage": 2,
             "name": "dti_calculation",
             "type": "deterministic_rule",
-            "proof_level": "attestation",    # → mathematical post-Java SDK
+            "proof_level": "attestation",  # → mathematical post-Java SDK
             "method": "threshold_comparison",
             "formula": "monthly_debt / gross_monthly_income <= max_dti",
             "purpose": "Debt-to-income ratio within policy limits",
-            "regulatory_references": ["occ_sr_11_7", "cfpb_ecoa", "cfpb_fcra"],
         },
         {
             "stage": 3,
@@ -101,7 +64,6 @@ BLAZE_MANIFEST_CREDIT_DECISIONING = {
             "method": "threshold_comparison",
             "formula": "loan_amount / appraised_value <= max_ltv",
             "purpose": "Loan-to-value ratio within policy limits",
-            "regulatory_references": ["occ_sr_11_7", "cfpb_ecoa"],
         },
         {
             "stage": 4,
@@ -110,7 +72,6 @@ BLAZE_MANIFEST_CREDIT_DECISIONING = {
             "proof_level": "attestation",
             "method": "set_membership",
             "purpose": "Applicant not in policy exclusion list",
-            "regulatory_references": ["cfpb_ecoa", "cfpb_fcra"],
         },
         {
             "stage": 5,
@@ -119,7 +80,6 @@ BLAZE_MANIFEST_CREDIT_DECISIONING = {
             "proof_level": "attestation",
             "method": "threshold_comparison",
             "purpose": "Aggregate score >= approval threshold",
-            "regulatory_references": ["occ_sr_11_7", "cfpb_ecoa"],
         },
     ],
     "aggregation": {"method": "worst_case"},
@@ -130,7 +90,7 @@ BLAZE_MANIFEST_CREDIT_DECISIONING = {
 
 @dataclass
 class BlazeDecisionResult:
-    decision: str           # "APPROVE" | "DECLINE" | "REFER"
+    decision: str  # "APPROVE" | "DECLINE" | "REFER"
     decision_score: float
     rules_fired: list[str]  # only available in Java SDK path
     reasons: list[str]
@@ -143,7 +103,7 @@ class PrimustDecisionRecord:
     record_id: str
     proof_level: str
     platform: str
-    decision: str           # pass/fail from Primust perspective
+    decision: str  # pass/fail from Primust perspective
 
 
 class FicoBlazeConnector:
@@ -151,7 +111,7 @@ class FicoBlazeConnector:
     Wraps FICO Blaze Advisor Decision Management Server REST API.
 
     TODAY (REST path): Attestation ceiling
-    POST-P10-D (Java SDK path): Mathematical ceiling — see BlazeAdvisorJava
+    POST-P10-D (Java SDK path): Mathematical ceiling — see FicoBlazeJavaAdapter
                                 stub below for what changes
 
     Fair lending use case:
@@ -160,21 +120,14 @@ class FicoBlazeConnector:
         CFPB examination: bank provides Evidence Pack (not applicant files).
         Examiner confirms same rules applied to every application without
         receiving the applicant data. ECOA compliance provable, not asserted.
-
-    Gap codes:
-      blaze_api_error (High) — DMS API call failed
-      blaze_auth_failure (Critical) — API key rejected
-      blaze_service_not_found (High) — Ruleset endpoint not found
-      blaze_rule_version_mismatch (Medium) — Unexpected ruleset version
-    Framework tags: ['occ_sr_11_7', 'cfpb_ecoa', 'cfpb_fcra']
     """
 
     def __init__(
         self,
-        blaze_server_url: str,   # e.g. "https://blaze-dms.bank.internal"
+        blaze_server_url: str,  # e.g. "https://blaze-dms.bank.internal"
         blaze_api_key: str,
         primust_api_key: str,
-        ruleset_name: str,       # e.g. "MortgageUnderwritingV4"
+        ruleset_name: str,  # e.g. "MortgageUnderwritingV4"
     ):
         self.blaze_url = blaze_server_url.rstrip("/")
         self.blaze_api_key = blaze_api_key
@@ -193,15 +146,15 @@ class FicoBlazeConnector:
 
     def evaluate(
         self,
-        pipeline: Any,
+        pipeline: primust.Pipeline,
         application_id: str,
-        applicant_data: dict,         # credit score, income, debt, LTV, etc.
-        visibility: str = "opaque",   # applicant financials are PII
+        applicant_data: dict,  # credit score, income, debt, LTV, etc.
+        visibility: str = "opaque",  # applicant financials are PII
     ) -> PrimustDecisionRecord:
         """
         Submit application to Blaze DMS and record proof of evaluation.
 
-        applicant_data is committed locally (SHA-256) before anything
+        applicant_data is committed locally (Poseidon2/SHA-256) before anything
         leaves the environment. The commitment hash transits to Primust.
         The actual applicant data never leaves your network.
 
@@ -213,73 +166,26 @@ class FicoBlazeConnector:
         if not manifest_id:
             raise RuntimeError("Call register_manifests() first")
 
-        # Compute input commitment — applicant data hashed, never sent
-        input_commitment = _commit(applicant_data)
-
         # Call Blaze DMS REST API
-        try:
-            with httpx.Client() as client:
-                resp = client.post(
-                    f"{self.blaze_url}/api/v1/decision/{self.ruleset_name}",
-                    json={"applicationId": application_id, "data": applicant_data},
-                    headers={"Authorization": f"Bearer {self.blaze_api_key}"},
-                    timeout=30.0,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                gap_type, severity = "blaze_auth_failure", "critical"
-            elif e.response.status_code == 404:
-                gap_type, severity = "blaze_service_not_found", "high"
-            else:
-                gap_type, severity = "blaze_api_error", "high"
-            record = pipeline.record(
-                check="fico_blaze_credit_decisioning",
-                manifest_id=manifest_id,
-                check_result="error",
-                input={"input_commitment": input_commitment},
-                details={"error_type": gap_type, "severity": severity},
-                visibility="opaque",
+        with httpx.Client() as client:
+            resp = client.post(
+                f"{self.blaze_url}/api/v1/decision/{self.ruleset_name}",
+                json={"applicationId": application_id, "data": applicant_data},
+                headers={"Authorization": f"Bearer {self.blaze_api_key}"},
+                timeout=30.0,
             )
-            return PrimustDecisionRecord(
-                commitment_hash=record.commitment_hash,
-                record_id=record.record_id,
-                proof_level=record.proof_level,
-                platform="fico_blaze",
-                decision="ERROR",
-            )
-        except Exception:
-            record = pipeline.record(
-                check="fico_blaze_credit_decisioning",
-                manifest_id=manifest_id,
-                check_result="error",
-                input={"input_commitment": input_commitment},
-                details={"error_type": "blaze_api_error", "severity": "high"},
-                visibility="opaque",
-            )
-            return PrimustDecisionRecord(
-                commitment_hash=record.commitment_hash,
-                record_id=record.record_id,
-                proof_level=record.proof_level,
-                platform="fico_blaze",
-                decision="ERROR",
-            )
+            resp.raise_for_status()
+            data = resp.json()
 
         blaze_result = self._parse_response(data)
         check_result = "pass" if blaze_result.decision == "APPROVE" else "fail"
 
-        # Output commitment — decision metadata, not raw scores
-        output_commitment = _commit({
-            "decision": blaze_result.decision,
-            "decision_score": blaze_result.decision_score,
-            "reason_count": len(blaze_result.reasons),
-        })
-
+        # Commit applicant_data as input — the deterministic check input
+        # Include application_id so the commitment is traceable to the application
         record = pipeline.record(
             check="fico_blaze_credit_decisioning",
             manifest_id=manifest_id,
-            input={"input_commitment": input_commitment, "output_commitment": output_commitment},
+            input=applicant_data,  # committed locally, never sent to Primust
             check_result=check_result,
             details={
                 "application_id": application_id,
@@ -299,34 +205,6 @@ class FicoBlazeConnector:
             decision=blaze_result.decision,
         )
 
-    def execute_credit_decision(
-        self,
-        pipeline: Any,
-        application_id: str,
-        applicant_data: dict,
-    ) -> PrimustDecisionRecord:
-        """Convenience wrapper: credit decisioning with opaque visibility."""
-        return self.evaluate(
-            pipeline=pipeline,
-            application_id=application_id,
-            applicant_data=applicant_data,
-            visibility="opaque",
-        )
-
-    def execute_aml_screening(
-        self,
-        pipeline: Any,
-        application_id: str,
-        screening_data: dict,
-    ) -> PrimustDecisionRecord:
-        """Convenience wrapper: AML screening via Blaze ruleset."""
-        return self.evaluate(
-            pipeline=pipeline,
-            application_id=application_id,
-            applicant_data=screening_data,
-            visibility="opaque",
-        )
-
     def _parse_response(self, data: dict) -> BlazeDecisionResult:
         return BlazeDecisionResult(
             decision=data.get("decision", "DECLINE"),
@@ -338,33 +216,8 @@ class FicoBlazeConnector:
 
 
 # ---------------------------------------------------------------------------
-# Java SDK stub — demand-gate for Mathematical proof level
+# Java SDK stub — what changes when P10-D ships
 # ---------------------------------------------------------------------------
-
-class BlazeAdvisorJava:
-    """
-    Java SDK path for FICO Blaze Advisor — Mathematical proof ceiling.
-
-    NOT IMPLEMENTED: Requires Java SDK (P10-D) and in-process Blaze engine access.
-    This class exists to document the upgrade path and fail clearly at the demand gate.
-
-    When Java SDK ships:
-    - In-process rule execution (no REST call)
-    - Poseidon2 commitment of input/output in-process
-    - Per-rule manifest auto-population from fired rules
-    - Cross-run consistency enforced at Mathematical level
-    - ECOA compliance: provable, not attested
-
-    Proof level achieved: MATHEMATICAL
-    """
-
-    def __init__(self, *args: Any, **kwargs: Any):
-        raise NotImplementedError(
-            "BlazeAdvisorJava requires the Java SDK (P10-D). "
-            "Use FicoBlazeConnector for Attestation-level REST path. "
-            "See BLAZE_JAVA_UPGRADE_NOTE for the Mathematical proof path."
-        )
-
 
 BLAZE_JAVA_UPGRADE_NOTE = """
 When Java SDK (P10-D) ships, replace REST call + attestation with:
@@ -421,10 +274,9 @@ ODM_MANIFEST_UNDERWRITING = {
             "stage": 1,
             "name": "eligibility_rules",
             "type": "deterministic_rule",
-            "proof_level": "attestation",     # → mathematical post-Java SDK
+            "proof_level": "attestation",  # → mathematical post-Java SDK
             "method": "set_membership",
             "purpose": "Applicant meets product eligibility criteria",
-            "regulatory_references": ["occ_sr_11_7", "cfpb_ecoa"],
         },
         {
             "stage": 2,
@@ -433,7 +285,6 @@ ODM_MANIFEST_UNDERWRITING = {
             "proof_level": "attestation",
             "method": "threshold_comparison",
             "purpose": "Computed risk score within acceptable band",
-            "regulatory_references": ["occ_sr_11_7", "cfpb_ecoa"],
         },
         {
             "stage": 3,
@@ -442,7 +293,6 @@ ODM_MANIFEST_UNDERWRITING = {
             "proof_level": "attestation",
             "method": "threshold_comparison",
             "purpose": "Decision table output meets approval criteria",
-            "regulatory_references": ["occ_sr_11_7", "cfpb_ecoa", "dora_eu"],
         },
     ],
     "aggregation": {"method": "worst_case"},
@@ -460,11 +310,6 @@ class IBMODMConnector:
     that fired during execution. This enables AUTOMATIC manifest generation —
     the adapter can register a manifest that lists exactly which rules ran,
     not just the ruleset-level claim. Stronger evidence, less manual work.
-
-    Gap codes:
-      odm_api_error (High) — Decision Service call failed
-      odm_auth_failure (Critical) — API key rejected
-    Framework tags: ['occ_sr_11_7', 'cfpb_ecoa', 'dora_eu']
 
     REST path today:
       POST /DecisionService/rest/v1/{ruleApp}/{ruleAppVersion}/{ruleSet}/{ruleSetVersion}
@@ -501,7 +346,7 @@ class IBMODMConnector:
 
     def execute_decision(
         self,
-        pipeline: Any,
+        pipeline: primust.Pipeline,
         request_id: str,
         decision_input: dict,
         visibility: str = "opaque",
@@ -511,75 +356,32 @@ class IBMODMConnector:
         if not manifest_id:
             raise RuntimeError("Call register_manifests() first")
 
-        input_commitment = _commit(decision_input)
-
         endpoint = (
             f"{self.odm_url}/DecisionService/rest/v1"
             f"/{self.rule_app}/{self.rule_app_version}"
             f"/{self.rule_set}/{self.rule_set_version}"
         )
 
-        try:
-            with httpx.Client() as client:
-                resp = client.post(
-                    endpoint,
-                    json=decision_input,
-                    headers={
-                        "Authorization": f"Bearer {self.odm_api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    timeout=30.0,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPStatusError as e:
-            gap_type = "odm_auth_failure" if e.response.status_code == 401 else "odm_api_error"
-            severity = "critical" if gap_type == "odm_auth_failure" else "high"
-            record = pipeline.record(
-                check="ibm_odm_underwriting",
-                manifest_id=manifest_id,
-                check_result="error",
-                input={"input_commitment": input_commitment},
-                details={"error_type": gap_type, "severity": severity},
-                visibility="opaque",
+        with httpx.Client() as client:
+            resp = client.post(
+                endpoint,
+                json=decision_input,
+                headers={
+                    "Authorization": f"Bearer {self.odm_api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=30.0,
             )
-            return PrimustDecisionRecord(
-                commitment_hash=record.commitment_hash,
-                record_id=record.record_id,
-                proof_level=record.proof_level,
-                platform="ibm_odm",
-                decision="ERROR",
-            )
-        except Exception:
-            record = pipeline.record(
-                check="ibm_odm_underwriting",
-                manifest_id=manifest_id,
-                check_result="error",
-                input={"input_commitment": input_commitment},
-                details={"error_type": "odm_api_error", "severity": "high"},
-                visibility="opaque",
-            )
-            return PrimustDecisionRecord(
-                commitment_hash=record.commitment_hash,
-                record_id=record.record_id,
-                proof_level=record.proof_level,
-                platform="ibm_odm",
-                decision="ERROR",
-            )
+            resp.raise_for_status()
+            data = resp.json()
 
         decision = data.get("decision", "DECLINE")
         check_result = "pass" if decision in ("APPROVE", "ACCEPT") else "fail"
 
-        output_commitment = _commit({
-            "decision": decision,
-            "request_id": request_id,
-            "rule_set_version": self.rule_set_version,
-        })
-
         record = pipeline.record(
             check="ibm_odm_underwriting",
             manifest_id=manifest_id,
-            input={"input_commitment": input_commitment, "output_commitment": output_commitment},
+            input=decision_input,
             check_result=check_result,
             details={
                 "request_id": request_id,
@@ -655,7 +457,12 @@ BLAZE_FIT_VALIDATION = {
     "cross_run_consistency_applicable": True,  # killer feature for fair lending
     "buildable_today": True,
     "sdk_required_for_mathematical": "Java (P10-D, ~2-3 weeks)",
-    "regulatory_hooks": ["ECOA", "Fair Housing Act", "CFPB HMDA", "OCC Model Risk Guidance SR 11-7"],
+    "regulatory_hooks": [
+        "ECOA",
+        "Fair Housing Act",
+        "CFPB HMDA",
+        "OCC Model Risk Guidance SR 11-7",
+    ],
 }
 
 ODM_FIT_VALIDATION = {
@@ -678,5 +485,11 @@ ODM_FIT_VALIDATION = {
     "buildable_today": True,
     "sdk_required_for_mathematical": "Java (P10-D, ~2-3 weeks)",
     "unique_advantage": "getRulesFired() enables auto-manifest — no manual manifest authoring",
-    "regulatory_hooks": ["ECOA", "Fair Housing Act", "SR 11-7", "DORA (EU)", "Basel III model risk"],
+    "regulatory_hooks": [
+        "ECOA",
+        "Fair Housing Act",
+        "SR 11-7",
+        "DORA (EU)",
+        "Basel III model risk",
+    ],
 }

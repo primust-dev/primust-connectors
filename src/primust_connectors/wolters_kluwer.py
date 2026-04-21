@@ -1,17 +1,3 @@
-# Copyright 2026 Primust, Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """
 Primust Connector: Wolters Kluwer UpToDate Clinical Decision Support
 ====================================================================
@@ -35,39 +21,15 @@ Note on proof ceiling nuance:
     → mathematical when manifest includes the range bounds publicly
   - Overall VPEC = attestation (weakest-link), but per-stage breakdown surfaces
     the mathematical threshold stage to the verifier
-
-Gap codes:
-  wolters_kluwer_api_error (High) — UpToDate API call failed
-  wolters_kluwer_auth_failure (Critical) — API key rejected
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 import httpx
-
-from primust_artifact_core.commitment import commit as _artifact_commit
-
-try:
-    import primust
-    PRIMUST_AVAILABLE = True
-except ImportError:
-    PRIMUST_AVAILABLE = False
-
-
-# ---------------------------------------------------------------------------
-# Commitment helper — raw patient data never leaves this function
-# ---------------------------------------------------------------------------
-
-def _commit(data: Any) -> str:
-    """Commit via artifact-core commitment path (SHA-256 default, poseidon2 opt-in)."""
-    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
-    hash_str, _ = _artifact_commit(canonical.encode(), "sha256")
-    return hash_str
-
+import primust
 
 # ---------------------------------------------------------------------------
 # Manifests
@@ -85,23 +47,21 @@ MANIFEST_DRUG_INTERACTION = {
             "stage": 1,
             "name": "interaction_database_lookup",
             "type": "deterministic_rule",
-            "proof_level": "mathematical",      # deterministic lookup
+            "proof_level": "attestation",  # proprietary Medi-Span database
             "method": "set_membership",
             "purpose": "Contraindication lookup in Wolters Kluwer Medi-Span database",
-            "regulatory_references": ["hipaa_phi", "fda_drug_safety", "cms_conditions_participation"],
         },
         {
             "stage": 2,
             "name": "severity_classification",
             "type": "deterministic_rule",
-            "proof_level": "mathematical",
+            "proof_level": "attestation",
             "method": "threshold_comparison",
             "purpose": "Interaction severity score >= alert threshold (contraindicated/major/moderate/minor)",
-            "regulatory_references": ["hipaa_phi", "fda_drug_safety"],
         },
     ],
     "aggregation": {"method": "worst_case"},
-    "freshness_threshold_hours": 168,   # UpToDate updates weekly
+    "freshness_threshold_hours": 168,  # UpToDate updates weekly
     "publisher": "your-org-id",
 }
 
@@ -117,21 +77,19 @@ MANIFEST_DOSING_RANGE_CHECK = {
             "stage": 1,
             "name": "weight_adjusted_dose_min",
             "type": "deterministic_rule",
-            "proof_level": "mathematical",     # arithmetic: dose >= min_dose_per_kg * weight
+            "proof_level": "mathematical",  # arithmetic: dose >= min_dose_per_kg * weight
             "method": "threshold_comparison",
             "formula": "prescribed_dose_mg >= min_dose_per_kg * weight_kg",
             "purpose": "Prescribed dose not below minimum effective dose",
-            "regulatory_references": ["hipaa_phi", "fda_drug_safety", "cms_conditions_participation"],
         },
         {
             "stage": 2,
             "name": "weight_adjusted_dose_max",
             "type": "deterministic_rule",
-            "proof_level": "mathematical",     # arithmetic: dose <= max_dose_per_kg * weight
+            "proof_level": "mathematical",  # arithmetic: dose <= max_dose_per_kg * weight
             "method": "threshold_comparison",
             "formula": "prescribed_dose_mg <= max_dose_per_kg * weight_kg",
             "purpose": "Prescribed dose not above maximum safe dose",
-            "regulatory_references": ["hipaa_phi", "fda_drug_safety", "cms_conditions_participation"],
         },
         {
             "stage": 3,
@@ -141,7 +99,6 @@ MANIFEST_DOSING_RANGE_CHECK = {
             "method": "threshold_comparison",
             "formula": "if CrCl < 30: prescribed_dose <= renal_adjusted_max",
             "purpose": "Renal dosing adjustment applied when CrCl < 30 mL/min",
-            "regulatory_references": ["hipaa_phi", "fda_drug_safety"],
         },
     ],
     "aggregation": {"method": "all_must_pass"},
@@ -164,7 +121,6 @@ MANIFEST_CLINICAL_GUIDELINE_ADHERENCE = {
             "proof_level": "attestation",
             "method": "set_membership",
             "purpose": "Treatment option within recommended options for diagnosis",
-            "regulatory_references": ["hipaa_phi", "cms_conditions_participation"],
         },
         {
             "stage": 2,
@@ -173,7 +129,6 @@ MANIFEST_CLINICAL_GUIDELINE_ADHERENCE = {
             "proof_level": "attestation",
             "method": "set_membership",
             "purpose": "First-line vs second-line therapy validation",
-            "regulatory_references": ["hipaa_phi", "cms_conditions_participation"],
         },
     ],
     "aggregation": {"method": "worst_case"},
@@ -186,10 +141,11 @@ MANIFEST_CLINICAL_GUIDELINE_ADHERENCE = {
 # Result dataclasses
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class DrugInteractionResult:
     interaction_found: bool
-    severity: str           # "contraindicated" | "major" | "moderate" | "minor" | "none"
+    severity: str  # "contraindicated" | "major" | "moderate" | "minor" | "none"
     interaction_count: int
     drug_pair: tuple[str, str]
     raw_response: dict
@@ -209,13 +165,14 @@ class DosingResult:
 class PrimustClinicalRecord:
     commitment_hash: str
     record_id: str
-    proof_level: str          # "mathematical" for dosing, "attestation" for interaction
+    proof_level: str  # "mathematical" for dosing, "attestation" for interaction
     check_name: str
 
 
 # ---------------------------------------------------------------------------
 # Connector
 # ---------------------------------------------------------------------------
+
 
 class UpToDateConnector:
     """
@@ -248,7 +205,7 @@ class UpToDateConnector:
         )
 
         vpec = pipeline.close()
-        # vpec -> attach to prescription record
+        # vpec → attach to prescription record
         # In malpractice/audit context: proves checks ran without disclosing
         # patient medication list (HIPAA) or patient weight/renal function (PHI)
     """
@@ -266,12 +223,14 @@ class UpToDateConnector:
         self.interaction_alert_threshold = interaction_alert_threshold
         self._manifest_ids: dict[str, str] = {}
         self._severity_rank = {
-            "contraindicated": 4, "major": 3, "moderate": 2, "minor": 1, "none": 0
+            "contraindicated": 4,
+            "major": 3,
+            "moderate": 2,
+            "minor": 1,
+            "none": 0,
         }
 
     def register_manifests(self) -> None:
-        if not PRIMUST_AVAILABLE:
-            raise RuntimeError("primust package not installed: pip install primust")
         p = primust.Pipeline(api_key=self.primust_api_key, workflow_id="manifest-registration")
         for manifest in [
             MANIFEST_DRUG_INTERACTION,
@@ -283,12 +242,10 @@ class UpToDateConnector:
             print(f"Registered {manifest['name']}: {result.manifest_id}")
 
     def new_pipeline(self, workflow_id: str) -> primust.Pipeline:
-        if not PRIMUST_AVAILABLE:
-            raise RuntimeError("primust package not installed: pip install primust")
         return primust.Pipeline(api_key=self.primust_api_key, workflow_id=workflow_id)
 
     # ------------------------------------------------------------------
-    # Drug interaction check — Mathematical ceiling (deterministic lookup)
+    # Drug interaction check
     # ------------------------------------------------------------------
 
     def check_drug_interaction(
@@ -297,90 +254,45 @@ class UpToDateConnector:
         new_drug: str,
         current_medications: list[str],
         patient_id: str,
-        visibility: str = "opaque",   # patient medication list is PHI
+        visibility: str = "opaque",  # patient medication list is PHI
     ) -> PrimustClinicalRecord:
         """
         Check new drug against current medications for interactions.
 
         Visibility is "opaque" by default — medication list is PHI.
         Regulator/accreditor can request NDA audit path for full data if needed.
-
-        Input commitment hashes drug IDs (sorted for stable ordering).
-        Patient data NEVER in commitment fields.
         """
         manifest_id = self._manifest_ids.get("uptodate_drug_interaction_check")
         if not manifest_id:
             raise RuntimeError("Call register_manifests() first")
 
-        # Compute input commitment — drug IDs sorted for stable ordering
-        # Patient data NEVER in commitment fields
-        sorted_meds = sorted(current_medications)
-        input_commitment = _commit({
-            "check": "drug_interaction",
-            "new_drug": new_drug,
-            "medication_count": len(current_medications),
-            "medication_ids": sorted_meds,
-        })
-
         # Call UpToDate Interaction API
-        try:
-            with httpx.Client() as client:
-                resp = client.get(
-                    f"{self.BASE_URL}/contents/interaction",
-                    params={
-                        "drug1": new_drug,
-                        "drug2": "|".join(current_medications),
-                        "apikey": self.utd_api_key,
-                    },
-                    timeout=15.0,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPStatusError as e:
-            gap_type = "wolters_kluwer_auth_failure" if e.response.status_code == 401 else "wolters_kluwer_api_error"
-            severity = "critical" if gap_type == "wolters_kluwer_auth_failure" else "high"
-            record = pipeline.record(
-                check="uptodate_drug_interaction_check",
-                manifest_id=manifest_id,
-                check_result="error",
-                input={"input_commitment": input_commitment},
-                details={"error_type": gap_type, "severity": severity},
-                visibility="opaque",
+        with httpx.Client() as client:
+            resp = client.get(
+                f"{self.BASE_URL}/contents/interaction",
+                params={
+                    "drug1": new_drug,
+                    "drug2": "|".join(current_medications),
+                    "apikey": self.utd_api_key,
+                },
+                timeout=15.0,
             )
-            return PrimustClinicalRecord(
-                commitment_hash=record.commitment_hash,
-                record_id=record.record_id,
-                proof_level="attestation",
-                check_name="uptodate_drug_interaction_check",
-            )
-        except httpx.HTTPError:
-            record = pipeline.record(
-                check="uptodate_drug_interaction_check",
-                manifest_id=manifest_id,
-                check_result="error",
-                input={"input_commitment": input_commitment},
-                details={"error_type": "wolters_kluwer_api_error", "severity": "high"},
-                visibility="opaque",
-            )
-            return PrimustClinicalRecord(
-                commitment_hash=record.commitment_hash,
-                record_id=record.record_id,
-                proof_level="attestation",
-                check_name="uptodate_drug_interaction_check",
-            )
+            resp.raise_for_status()
+            data = resp.json()
 
         result = self._parse_interaction_response(data, new_drug, current_medications)
 
         alert_rank = self._severity_rank.get(self.interaction_alert_threshold, 3)
-        found_rank = max(
-            self._severity_rank.get(result.severity, 0), 0
-        )
+        found_rank = max(self._severity_rank.get(result.severity, 0), 0)
         check_result = "fail" if (result.interaction_found and found_rank >= alert_rank) else "pass"
 
+        # Input commits patient_id + new_drug + medication count
+        # NOT the medication names (PHI) — verifier can confirm input commitment
+        # matches their records without receiving the list
         record = pipeline.record(
             check="uptodate_drug_interaction_check",
             manifest_id=manifest_id,
-            input={"input_commitment": input_commitment},
+            input=f"{patient_id}|{new_drug}|meds_count:{len(current_medications)}",
             check_result=check_result,
             details={
                 "severity": result.severity,
@@ -406,9 +318,9 @@ class UpToDateConnector:
         drug: str,
         prescribed_dose_mg: float,
         weight_kg: float,
-        crcl: Optional[float] = None,    # creatinine clearance mL/min
+        crcl: Optional[float] = None,  # creatinine clearance mL/min
         age_years: Optional[int] = None,
-        visibility: str = "opaque",   # patient weight/renal function are PHI
+        visibility: str = "selective",  # dose/weight are PHI but ranges can be shown
     ) -> PrimustClinicalRecord:
         """
         Validate prescribed dose against weight-adjusted safe range.
@@ -421,73 +333,30 @@ class UpToDateConnector:
         This is the cleanest Mathematical proof story in clinical settings:
         the verifier can independently compute whether the dose was within range
         given just the weight and the published dosing table — zero trust in anyone.
-
-        Input commitment hashes drug + dose parameters.
-        Patient data (weight, renal function) NEVER in commitment fields.
         """
         manifest_id = self._manifest_ids.get("uptodate_dosing_range_check")
         if not manifest_id:
             raise RuntimeError("Call register_manifests() first")
 
-        # Compute input commitment — drug + dose, no patient biometrics
-        input_commitment = _commit({
-            "check": "dosing_range",
-            "drug": drug,
-            "prescribed_dose_mg": prescribed_dose_mg,
-        })
-
         # Call UpToDate Dosing API
-        try:
-            with httpx.Client() as client:
-                params = {
-                    "drug": drug,
-                    "weight_kg": weight_kg,
-                    "apikey": self.utd_api_key,
-                }
-                if crcl is not None:
-                    params["crcl"] = crcl
-                if age_years is not None:
-                    params["age_years"] = age_years
+        with httpx.Client() as client:
+            params = {
+                "drug": drug,
+                "weight_kg": weight_kg,
+                "apikey": self.utd_api_key,
+            }
+            if crcl is not None:
+                params["crcl"] = crcl
+            if age_years is not None:
+                params["age_years"] = age_years
 
-                resp = client.get(
-                    f"{self.BASE_URL}/contents/dosing",
-                    params=params,
-                    timeout=15.0,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPStatusError as e:
-            gap_type = "wolters_kluwer_auth_failure" if e.response.status_code == 401 else "wolters_kluwer_api_error"
-            severity = "critical" if gap_type == "wolters_kluwer_auth_failure" else "high"
-            record = pipeline.record(
-                check="uptodate_dosing_range_check",
-                manifest_id=manifest_id,
-                check_result="error",
-                input={"input_commitment": input_commitment},
-                details={"error_type": gap_type, "severity": severity},
-                visibility="opaque",
+            resp = client.get(
+                f"{self.BASE_URL}/contents/dosing",
+                params=params,
+                timeout=15.0,
             )
-            return PrimustClinicalRecord(
-                commitment_hash=record.commitment_hash,
-                record_id=record.record_id,
-                proof_level="attestation",
-                check_name="uptodate_dosing_range_check",
-            )
-        except httpx.HTTPError:
-            record = pipeline.record(
-                check="uptodate_dosing_range_check",
-                manifest_id=manifest_id,
-                check_result="error",
-                input={"input_commitment": input_commitment},
-                details={"error_type": "wolters_kluwer_api_error", "severity": "high"},
-                visibility="opaque",
-            )
-            return PrimustClinicalRecord(
-                commitment_hash=record.commitment_hash,
-                record_id=record.record_id,
-                proof_level="attestation",
-                check_name="uptodate_dosing_range_check",
-            )
+            resp.raise_for_status()
+            data = resp.json()
 
         dosing = self._parse_dosing_response(data, prescribed_dose_mg, weight_kg, crcl)
         check_result = "pass" if dosing.within_range else "fail"
@@ -495,7 +364,7 @@ class UpToDateConnector:
         record = pipeline.record(
             check="uptodate_dosing_range_check",
             manifest_id=manifest_id,
-            input={"input_commitment": input_commitment},
+            input=f"{drug}|dose:{prescribed_dose_mg}mg|weight:{weight_kg}kg|crcl:{crcl}",
             check_result=check_result,
             details={
                 "within_range": dosing.within_range,

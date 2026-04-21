@@ -1,0 +1,49 @@
+sources:
+  - name: purview
+    auth:
+      type: hmac
+      header: X-Webhook-Signature
+      secret: "${PURVIEW_WEBHOOK_SECRET}"
+    session_boundary:
+      group_by: data.UserId  # or data.ObjectId for content-centric
+      close_on_event: []  # no terminal event — sessions close on inactivity
+      inactivity_timeout_hours: 1
+    event_mapping:
+      CopilotInteraction:
+        action_type: copilot_content_access
+        consequential: true
+        checks:
+          - check_id: purview.copilot_governance
+            result_field: data.PolicyMatchInfo.HasMatch
+            proof_level: attestation
+          - check_id: purview.sensitivity_label
+            result_field: data.SensitivityLabel.LabelId
+            proof_level: attestation
+      DLPRuleMatch:
+        action_type: dlp_evaluation
+        consequential: true
+        checks:
+          - check_id: purview.dlp_policy_match
+            result_field: data.PolicyDetails.Action
+            proof_level: attestation
+      SensitivityLabelApplied:
+        action_type: label_application
+        consequential: false
+        checks:
+          - check_id: purview.sensitivity_label
+            result_field: data.LabelAction
+            proof_level: attestation
+      FileAccessed:
+        action_type: content_access
+        consequential: false
+        checks:
+          - check_id: purview.content_access_audit
+            result_field: data.ResultStatus
+            proof_level: attestation
+      MIPLabel:
+        action_type: label_application
+        consequential: false
+        checks:
+          - check_id: purview.sensitivity_label
+            result_field: data.LabelAction
+            proof_level: attestation

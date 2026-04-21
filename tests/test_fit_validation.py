@@ -1,21 +1,7 @@
-# Copyright 2026 Primust, Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """
 Primust Connectors — Fit validation tests.
 
-All 13 connectors must pass the three-property filter:
+All 14 connectors must pass the three-property filter:
   1. Regulated process (has regulatory_hooks)
   2. External verifier with trust deficit
   3. Data that can't be disclosed
@@ -24,6 +10,7 @@ Note: FICO Falcon and Pega CDH pass 3/3 but have PARTIAL fit declarations.
 Passing the filter means the properties exist; the fit_declared field
 preserves the honest governance value assessment.
 """
+
 from __future__ import annotations
 
 import sys
@@ -51,9 +38,9 @@ class TestFitValidation:
                 f"data={result['prop3_data_cannot_be_disclosed']}"
             )
 
-    def test_exactly_13_connectors_registered(self):
-        """Exactly 13 connectors in the validation set."""
-        assert len(ALL_CONNECTORS) == 13
+    def test_exactly_14_connectors_registered(self):
+        """Exactly 14 connectors in the validation set."""
+        assert len(ALL_CONNECTORS) == 14
 
     def test_each_connector_has_required_fields(self):
         """Each connector dict has the minimum required fields."""

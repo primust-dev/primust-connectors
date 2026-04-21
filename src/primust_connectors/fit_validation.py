@@ -1,17 +1,3 @@
-# Copyright 2026 Primust, Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """
 Primust Connector Fit Validation
 =================================
@@ -22,6 +8,7 @@ Validates fit for all connectors against the three-property filter:
 
 Run: python -m primust_connectors.fit_validation
 """
+
 from __future__ import annotations
 
 from primust_connectors.comply_advantage import FIT_VALIDATION as COMPLY_FIT
@@ -30,6 +17,7 @@ from primust_connectors.credit_brms import BLAZE_FIT_VALIDATION, ODM_FIT_VALIDAT
 from primust_connectors.nice_actimize import FIT_VALIDATION as ACTIMIZE_FIT
 from primust_connectors.fico_falcon import FIT_VALIDATION as FALCON_FIT
 from primust_connectors.pega_decisioning import FIT_VALIDATION as PEGA_FIT
+from primust_connectors.purview import FIT_VALIDATION as PURVIEW_FIT
 
 GUIDEWIRE_FIT = {
     "platform": "Guidewire ClaimCenter / PolicyCenter",
@@ -45,8 +33,7 @@ GUIDEWIRE_FIT = {
         "Cedant proves adjudication ran per policy terms on each claim without "
         "providing the reinsurer the claim file. Math replaces disclosure."
     ),
-    "proof_ceiling_today": "attestation",
-    "proof_ceiling_post_java_sdk": "mathematical",
+    "proof_ceiling": "mathematical",
     "cross_run_consistency_applicable": True,
     "buildable_today": False,
     "sdk_required": "Java (P10-D) + Guidewire Studio license",
@@ -74,8 +61,7 @@ HEALTHSHARE_FIT = {
         "processes ran without receiving PHI. HIPAA paradox resolved. "
         "Consent verification chain provides portable proof for HIE disputes."
     ),
-    "proof_ceiling_today": "attestation",
-    "proof_ceiling_post_java_sdk": "mathematical",
+    "proof_ceiling": "mathematical",
     "proof_ceiling_notes": (
         "Consent check = set_membership (deterministic). "
         "Consent expiry = threshold_comparison (arithmetic). "
@@ -112,8 +98,7 @@ SAPIENS_DECISION_FIT = {
         "fair underwriting proof to state commissioner without disclosing applications. "
         "Reinsurance treaty: prove exclusion check ran without sharing application files."
     ),
-    "proof_ceiling_today": "attestation",
-    "proof_ceiling_post_java_sdk": "mathematical",
+    "proof_ceiling": "mathematical",
     "cross_run_consistency_applicable": True,
     "buildable_today": False,
     "sdk_required": "Java SDK (P10-D)",
@@ -144,8 +129,7 @@ DUCK_CREEK_FIT = {
         "Claims: proves adjudication ran per policy terms without sharing claim files. "
         "Reinsurance: math replaces disclosure for treaty compliance."
     ),
-    "proof_ceiling_today": "attestation",
-    "proof_ceiling_post_csharp_sdk": "mathematical",
+    "proof_ceiling": "mathematical",
     "cross_run_consistency_applicable": True,
     "buildable_today": False,
     "sdk_required": "C# SDK (P10-E)",
@@ -165,8 +149,7 @@ MAJESCO_FIT = {
     "trust_deficit": True,
     "data_sensitivity": "Policyholder PII, health data (L&AH), rating factors, claimant records",
     "gep_value": "Identical to Duck Creek and Guidewire — same story, different platform.",
-    "proof_ceiling_today": "attestation",
-    "proof_ceiling_post_csharp_sdk": "mathematical",
+    "proof_ceiling": "mathematical",
     "cross_run_consistency_applicable": True,
     "buildable_today": False,
     "sdk_required": "C# SDK (P10-E)",
@@ -201,8 +184,11 @@ SAPIENS_ALIS_FIT = {
         "discriminatorily without producing protected health information. "
         "SEC variable product: automated vs human decision (GDPR Art. 22 analog)."
     ),
-    "proof_ceiling_today": "attestation",
-    "proof_ceiling_post_csharp_sdk": "mathematical",
+    "proof_ceiling": {
+        "suitability_thresholds": "mathematical",
+        "underwriting_rules": "mathematical",
+        "benefit_determination": "mathematical",
+    },
     "cross_run_consistency_applicable": True,
     "buildable_today": False,
     "sdk_required": "C# SDK (P10-E)",
@@ -229,8 +215,9 @@ ALL_CONNECTORS = [
     BLAZE_FIT_VALIDATION,
     ODM_FIT_VALIDATION,
     UTD_FIT,
-    FALCON_FIT,       # PARTIAL fit — honest assessment
-    PEGA_FIT,         # PARTIAL fit — context dependent
+    FALCON_FIT,  # PARTIAL fit — honest assessment
+    PEGA_FIT,  # PARTIAL fit — context dependent
+    PURVIEW_FIT,  # Microsoft Purview Copilot governance + DLP
     # Java spec files (require Java SDK)
     GUIDEWIRE_FIT,
     HEALTHSHARE_FIT,
@@ -252,7 +239,9 @@ def validate_fit(connector: dict) -> dict:
     the properties exist but the governance value is limited.
     """
     prop1_regulated = bool(connector.get("regulatory_hooks"))
-    prop2_external_verifier = bool(connector.get("external_verifier")) and connector.get("trust_deficit", False)
+    prop2_external_verifier = bool(connector.get("external_verifier")) and connector.get(
+        "trust_deficit", False
+    )
     prop3_data_sensitivity = bool(connector.get("data_sensitivity"))
 
     score = sum([prop1_regulated, prop2_external_verifier, prop3_data_sensitivity])
@@ -266,39 +255,36 @@ def validate_fit(connector: dict) -> dict:
         "prop1_regulated_process": prop1_regulated,
         "prop2_external_verifier_trust_deficit": prop2_external_verifier,
         "prop3_data_cannot_be_disclosed": prop3_data_sensitivity,
-        "proof_ceiling_today": connector.get("proof_ceiling_today") or connector.get("proof_ceiling") or "attestation",
-        "proof_ceiling_max": connector.get("proof_ceiling_post_java_sdk") or connector.get("proof_ceiling_post_csharp_sdk") or connector.get("proof_ceiling_today") or connector.get("proof_ceiling") or "attestation",
+        "proof_ceiling": connector.get("proof_ceiling") or connector.get("proof_ceiling_today"),
         "buildable_today": connector.get("buildable_today", False),
-        "sdk_blocker": connector.get("sdk_required_for_mathematical") or connector.get("sdk_required"),
+        "sdk_blocker": connector.get("sdk_required_for_mathematical")
+        or connector.get("sdk_required"),
         "cross_run_consistency": connector.get("cross_run_consistency_applicable", False),
     }
 
 
 def print_summary() -> None:
-    print("\n" + "=" * 92)
+    print("\n" + "=" * 80)
     print("PRIMUST CONNECTOR FIT VALIDATION")
-    print("=" * 92)
-    print(f"{'Platform':<32} {'Fit':>8} {'Score':>6} {'Ready':>6} {'Ceiling (today)':>16} {'Max (SDK)':>16}")
-    print("-" * 92)
+    print("=" * 80)
+    print(f"{'Platform':<40} {'Fit Declared':>16} {'Score':>6} {'Today':>6} {'Ceiling':>12}")
+    print("-" * 80)
 
     for connector in ALL_CONNECTORS:
         result = validate_fit(connector)
         today_str = "Y" if result["buildable_today"] else "N"
-        ceiling_today = result["proof_ceiling_today"]
-        ceiling_max = result["proof_ceiling_max"]
-        if isinstance(ceiling_today, dict):
-            ceiling_today = "mixed"
-        if isinstance(ceiling_max, dict):
-            ceiling_max = "mathematical"
-        fit_decl = str(result["fit_declared"]).split(" ")[0]  # just STRONG or PARTIAL
-        max_str = ceiling_max if ceiling_max != ceiling_today else "—"
+        ceiling = result["proof_ceiling"]
+        if isinstance(ceiling, dict):
+            ceiling = "mathematical*"
+        else:
+            ceiling = str(ceiling)[:12]
+        fit_decl = str(result["fit_declared"])[:16]
         print(
-            f"{result['platform'][:32]:<32} "
-            f"{fit_decl:>8} "
+            f"{result['platform'][:40]:<40} "
+            f"{fit_decl:>16} "
             f"{result['score']:>6} "
             f"{today_str:>6} "
-            f"{str(ceiling_today):>16} "
-            f"{max_str:>16}"
+            f"{ceiling:>12}"
         )
 
     print()
